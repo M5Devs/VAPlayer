@@ -155,9 +155,10 @@ signals:
 
     /**
      * Emitted for every command reply.  id matches the value returned by
-     * sendCommand(); result holds the "return" object (empty on error).
+     * sendCommand(); result holds the raw "return" value, which QMP defines as
+     * any JSON type (object, array, string or null).
      */
-    void replyReceived(int id, const QJsonObject &result);
+    void replyReceived(int id, const QJsonValue &result);
 
     /** Emitted for asynchronous events such as RESET or SHUTDOWN. */
     void eventReceived(const QString &event, const QJsonObject &data);

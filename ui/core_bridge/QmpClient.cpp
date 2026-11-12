@@ -256,8 +256,10 @@ void QmpClient::processReply(const QJsonObject &obj)
         return;
     }
 
-    const QJsonObject result =
-        obj.value(QString::fromLatin1(kKeyReturn)).toObject();
+    // QMP allows any JSON type for "return" (for example
+    // human-monitor-command returns a string), so the value is forwarded
+    // unchanged rather than coerced to an object.
+    const QJsonValue result = obj.value(QString::fromLatin1(kKeyReturn));
 
     // The capabilities handshake reply has no command id; it flips the client
     // into the ready state and is not surfaced as an ordinary reply.

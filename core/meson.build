@@ -3630,6 +3630,7 @@ trace_events_subdirs = [
   'backends',
   'backends/tpm',
   'ebpf',
+  'hw/9pfs',
   'hw/acpi',
   'hw/adc',
   'hw/audio',

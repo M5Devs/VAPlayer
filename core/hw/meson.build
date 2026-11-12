@@ -2,6 +2,7 @@
 subdir('xenpv') # i386 uses it
 subdir('i386')
 
+subdir('9pfs')
 subdir('acpi')
 subdir('adc')
 subdir('audio')

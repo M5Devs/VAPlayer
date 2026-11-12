@@ -26,7 +26,11 @@ The `core/` tree is reduced to what x86_64 system emulation needs:
 - Firmware blobs in `pc-bios/` are limited to the x86_64 set.
 
 VirtIO drivers retained: `virtio-gpu`, `virtio-blk`, `virtio-net`,
-`virtio-snd`, `virtio-input`.
+`virtio-snd`, `virtio-input`, `virtio-9p`.
+
+VirtFS (9p) is enabled so the host-to-guest shared folder works. The core
+advertises `virtio-9p-pci` only when it is built with `--enable-virtfs`; the
+UI checks for the device before adding the shared folder to the command line.
 
 ## Building
 
@@ -34,6 +38,7 @@ VirtIO drivers retained: `virtio-gpu`, `virtio-blk`, `virtio-net`,
 cd core
 mkdir -p build && cd build
 ../configure --target-list=x86_64-softmmu \
+    --enable-virtfs \
     --disable-docs --disable-guest-agent --disable-tools \
     --disable-sdl --disable-gtk --disable-vnc --disable-opengl \
     --disable-spice --disable-curl --disable-libssh --disable-usb-redir \

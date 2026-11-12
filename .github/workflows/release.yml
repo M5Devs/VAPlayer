@@ -1,0 +1,158 @@
+# VAPlayer release
+#
+# Copyright (C) 2026 VAPlayer contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Publishes a GitHub Release whenever a version tag is pushed.  The archive
+# contains the two binaries the project ships plus the keymapper profiles the
+# UI looks for beside itself:
+#
+#   bin/vaplayer-core        pruned QEMU core (x86_64-softmmu, VirtFS, slirp)
+#   bin/vaplayer-ui          Qt front end
+#   bin/profiles/default.json
+#
+# Qt6 is a runtime dependency of vaplayer-ui and is intentionally not bundled;
+# the release notes say which distribution packages provide it.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to publish (for example v0.1.0)
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-24.04
+    steps:
+      # Full history so --generate-notes can diff against the previous tag.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve the version
+        id: version
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            tag="${{ github.event.inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=${tag}" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ninja-build pkg-config python3 python3-venv \
+            libglib2.0-dev libpixman-1-dev zlib1g-dev libattr1-dev cmake qt6-base-dev qt6-base-dev-tools \
+            qt6-qpa-plugins libgl1-mesa-dev
+
+      - name: Configure the core
+        working-directory: core
+        run: |
+          ./configure \
+            --target-list=x86_64-softmmu \
+            --enable-virtfs \
+            --disable-slirp \
+            --disable-docs --disable-guest-agent --disable-tools \
+            --disable-sdl --disable-gtk --disable-vnc --disable-opengl \
+            --disable-spice --disable-curl --disable-libssh \
+            --disable-usb-redir --disable-libusb --disable-brlapi \
+            --disable-curses --disable-capstone --disable-numa \
+            --disable-replication
+
+      - name: Build the core
+        working-directory: core
+        run: ninja -C build -j"$(nproc)"
+
+      - name: Build the UI
+        run: |
+          cmake -S ui -B ui/build -DCMAKE_BUILD_TYPE=Release
+          cmake --build ui/build -j"$(nproc)"
+
+      - name: Smoke-test the core
+        working-directory: core
+        run: |
+          ./build/vaplayer-core -device help | tee /tmp/devices.txt
+          grep -q 'name "virtio-9p-pci"' /tmp/devices.txt \
+            || { echo 'virtio-9p-pci missing from vaplayer-core'; exit 1; }
+
+      - name: Assemble the release tree
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -eu
+          root="vaplayer-${VERSION}-linux-x86_64"
+          rm -rf "$root" "$root.tar.gz" "$root.tar.gz.sha256"
+
+          install -D -m 0755 core/build/vaplayer-core "$root/bin/vaplayer-core"
+          install -D -m 0755 ui/build/vaplayer-ui "$root/bin/vaplayer-ui"
+          install -D -m 0644 ui/profiles/default.json \
+            "$root/bin/profiles/default.json"
+          install -D -m 0644 README.md "$root/README.md"
+          install -D -m 0644 COPYING "$root/COPYING"
+
+          tar -czf "$root.tar.gz" "$root"
+          sha256sum "$root.tar.gz" > "$root.tar.gz.sha256"
+
+      - name: Write the extra release notes
+        run: |
+          cat > /tmp/extra-notes.md <<'EOF'
+          ## Contents
+
+          | File | Description |
+          | --- | --- |
+          | `bin/vaplayer-core` | Pruned QEMU core, `x86_64-softmmu`, VirtFS and slirp enabled |
+          | `bin/vaplayer-ui` | Qt front end |
+          | `bin/profiles/default.json` | Default keymapper profile |
+
+          ## Requirements
+
+          `vaplayer-ui` links against Qt 6 at runtime:
+
+          * Debian/Ubuntu: `qt6-base-dev-tools qt6-qpa-plugins`
+          * Fedora: `qt6-qtbase-gui`
+
+          `vaplayer-core` needs `libglib-2.0`, `libpixman-1`, `zlib` and
+          `libslirp` at runtime, all of which are present on a stock desktop.
+
+          ## Verify
+
+          ```
+          sha256sum -c vaplayer-*.tar.gz.sha256
+          ```
+          EOF
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -eu
+          archive="vaplayer-${VERSION}-linux-x86_64.tar.gz"
+
+          # Re-running the workflow for an existing tag replaces the assets.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$archive" "$archive.sha256" --clobber
+            exit 0
+          fi
+
+          args=(--title "VAPlayer ${TAG}" --generate-notes
+                --notes "$(cat /tmp/extra-notes.md)")
+          previous="$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
+          if [ -n "$previous" ]; then
+            args+=(--notes-start-tag "$previous")
+          fi
+
+          gh release create "$TAG" "$archive" "$archive.sha256" "${args[@]}"

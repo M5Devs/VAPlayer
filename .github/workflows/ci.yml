@@ -1,0 +1,136 @@
+# VAPlayer continuous integration
+#
+# Copyright (C) 2026 VAPlayer contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Builds and tests the three parts of the tree on every push and pull request:
+#   * core/  - the pruned QEMU emulation core (x86_64-softmmu, VirtFS enabled)
+#   * ui/    - the Qt front end and its test suites
+#   * tools/ - the Python provisioning tools and their test suite
+#
+# The core is the slow step, so it is built once and handed to the UI job as an
+# artifact.  That is what lets the UI's core_integration test run for real
+# instead of skipping.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# A newer push to the same branch supersedes an in-flight run.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  core:
+    name: Build vaplayer-core
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential ninja-build pkg-config python3 python3-venv \
+            libglib2.0-dev libpixman-1-dev zlib1g-dev libattr1-dev
+
+      - name: Configure the core
+        working-directory: core
+        run: |
+          ./configure \
+            --target-list=x86_64-softmmu \
+            --enable-virtfs \
+            --disable-slirp \
+            --disable-docs --disable-guest-agent --disable-tools \
+            --disable-sdl --disable-gtk --disable-vnc --disable-opengl \
+            --disable-spice --disable-curl --disable-libssh \
+            --disable-usb-redir --disable-libusb --disable-brlapi \
+            --disable-curses --disable-capstone --disable-numa \
+            --disable-replication
+
+      - name: Assert VirtFS was configured in
+        working-directory: core
+        run: |
+          grep -q '^#define CONFIG_VIRTFS$' build/config-host.h \
+            || { echo 'VirtFS was not enabled'; exit 1; }
+
+      - name: Build the core
+        working-directory: core
+        run: ninja -C build -j"$(nproc)"
+
+      - name: Verify virtio-9p-pci is compiled in
+        working-directory: core
+        run: |
+          ./build/vaplayer-core -device help | tee /tmp/devices.txt
+          grep -q 'name "virtio-9p-pci"' /tmp/devices.txt \
+            || { echo 'virtio-9p-pci missing from vaplayer-core'; exit 1; }
+
+      - name: Upload vaplayer-core
+        uses: actions/upload-artifact@v4
+        with:
+          name: vaplayer-core
+          path: core/build/vaplayer-core
+          if-no-files-found: error
+
+  tools:
+    name: Provisioning tools (pytest)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3 python3-pytest e2fsprogs qemu-utils \
+            xorriso squashfs-tools android-sdk-libsparse-utils
+
+      - name: Run the tools test suite
+        working-directory: tools
+        run: python3 -m pytest -q
+
+  ui:
+    name: UI and integration tests
+    runs-on: ubuntu-24.04
+    needs: core
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            qt6-base-dev qt6-base-dev-tools qt6-qpa-plugins \
+            libgl1-mesa-dev
+
+      - name: Download vaplayer-core
+        uses: actions/download-artifact@v4
+        with:
+          name: vaplayer-core
+          path: core/build
+
+      - name: Make the core executable
+        run: chmod +x core/build/vaplayer-core
+
+      - name: Configure the UI
+        run: cmake -S ui -B ui/build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build the UI
+        run: cmake --build ui/build -j"$(nproc)"
+
+      - name: Run the test suites
+        working-directory: ui/build
+        env:
+          QT_QPA_PLATFORM: offscreen
+          VAPLAYER_CORE: ${{ github.workspace }}/core/build/vaplayer-core
+        run: ctest --output-on-failure

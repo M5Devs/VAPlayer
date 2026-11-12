@@ -21,9 +21,12 @@
 #include "process/EmulatorRunner.h"
 
 #include <QCoreApplication>
+#include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QTest>
 
 /**
@@ -40,6 +43,8 @@ private slots:
 
     void handshakeAndStatusRoundTrip();
     void controlCommandsAreAccepted();
+    void coreAdvertisesVirtio9p();
+    void sharedFolderDeviceIsInstantiated();
 
 private:
     QString m_corePath;
@@ -151,6 +156,73 @@ void TestCoreIntegration::controlCommandsAreAccepted()
 
     client.disconnectFromServer();
     runner.stop(5000);
+}
+
+/**
+ * The whole shared-folder feature depends on the core advertising
+ * virtio-9p-pci, so assert it against the real binary rather than a stub.
+ */
+void TestCoreIntegration::coreAdvertisesVirtio9p()
+{
+    EmulatorRunner runner;
+    QVERIFY2(runner.supportsDevice(QStringLiteral("virtio-9p-pci")),
+             "vaplayer-core was built without VirtFS: rebuild core/ with "
+             "--enable-virtfs");
+}
+
+/**
+ * Starts the core exactly as the UI does for a shared folder and confirms
+ * through QMP that the 9p device really reached the machine, not merely that
+ * the command line was well formed.
+ */
+void TestCoreIntegration::sharedFolderDeviceIsInstantiated()
+{
+    QTemporaryDir shareDir;
+    QVERIFY(shareDir.isValid());
+    const QString hostFile = shareDir.filePath(QStringLiteral("marker.txt"));
+    {
+        QFile marker(hostFile);
+        QVERIFY(marker.open(QIODevice::WriteOnly));
+        marker.write("vaplayer-9p-marker");
+    }
+
+    EmulatorConfig config;
+    config.headless = true;
+    config.enableSound = false;
+    config.enableNetwork = false;
+    config.enableGpu = false;
+    config.enableTablet = false;
+    config.emulatorPath = m_corePath;
+    config.sharedFolderPath = shareDir.path();
+    config.sharedFolderTag = QStringLiteral("vaplayer_share");
+
+    EmulatorRunner runner;
+    runner.setConfig(config);
+    QVERIFY(runner.start());
+
+    QmpClient client;
+    const QString endpoint = runner.qmpEndpoint();
+    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(endpoint), 10000);
+    client.connectToServer(endpoint);
+    QTRY_VERIFY_WITH_TIMEOUT(client.isReady(), 10000);
+
+    // "info qtree" is served over HMP; its output names every instantiated
+    // device, so it proves the 9p controller and its backend are live.
+    QSignalSpy replySpy(&client, &QmpClient::replyReceived);
+    QJsonObject args;
+    args.insert(QStringLiteral("command-line"), QStringLiteral("info qtree"));
+    QVERIFY(client.sendCommand(QStringLiteral("human-monitor-command"), args) > 0);
+    QTRY_VERIFY_WITH_TIMEOUT(replySpy.count() >= 1, 10000);
+
+    const QString tree = replySpy.takeFirst().at(1).toJsonValue().toString();
+    QVERIFY2(tree.contains(QStringLiteral("virtio-9p-pci")),
+             qPrintable(QStringLiteral("qtree had no 9p device:\n") + tree));
+    QVERIFY2(tree.contains(QStringLiteral("fsdev = \"vaplayer_fs\"")),
+             qPrintable(QStringLiteral("qtree had no 9p fsdev:\n") + tree));
+
+    client.disconnectFromServer();
+    runner.stop(5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!runner.isRunning(), 10000);
 }
 
 QTEST_MAIN(TestCoreIntegration)
