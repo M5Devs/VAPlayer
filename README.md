@@ -50,3 +50,27 @@ ninja
 The result is `build/vaplayer-core`. Hardware acceleration is provided by
 WHPX (Windows), KVM (Linux) and HVF (macOS), with TCG as the portable
 fallback.
+
+### Running the core outside the build tree
+
+The core loads its firmware at runtime, resolving it as a relocated QEMU
+does: it looks under `<dir-of-binary>/qemu-bundle/<prefix>/share/qemu`. A
+binary copied away from that layout exits at startup with
+
+    qemu: could not load PC BIOS 'bios-256k.bin'
+
+`build/qemu-bundle/` already has the right shape, but its entries are
+symlinks into the source tree. To move the core somewhere else, copy the
+firmware rather than the symlinks:
+
+```sh
+dest=/path/to/install/bin
+mkdir -p "$dest/qemu-bundle/usr/local/share"
+install -m 0755 core/build/vaplayer-core "$dest/"
+cp -r core/pc-bios "$dest/qemu-bundle/usr/local/share/qemu"
+```
+
+The release archive and the CI artifact are laid out this way already.
+`.github/scripts/stage-core.sh` performs the same copy, and
+`.github/scripts/smoke-core.sh` boots a staged core to confirm it can
+start a machine.
