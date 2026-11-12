@@ -1,0 +1,4 @@
+core/build/
+core/pyvenv/
+*.o
+*.a

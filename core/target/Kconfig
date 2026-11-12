@@ -1,0 +1,4 @@
+source i386/Kconfig
+
+config TARGET_BIG_ENDIAN
+    bool
