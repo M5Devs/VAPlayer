@@ -60,3 +60,46 @@ ninja          # -> build/vaplayer-core (~76 MB)
   `git push "https://${GITHUB_TOKEN}@github.com/M5Devs/VAPlayer.git" main`
   (the embedded credential in the remote is stale and hangs on a prompt).
 - `git config` user: `openhands` / `openhands@all-hands.dev`.
+- The remote moves independently: `git push` can be rejected with "fetch
+  first". Fetch, `git rebase FETCH_HEAD`, rebuild, then push.
+
+## Qt UI (`ui/`, commit `05d7b7d`)
+- Qt6 (6.8.2) is installed; Qt5.15 via `sudo apt-get install qtbase5-dev
+  qtbase5-dev-tools`. Build: `cmake -S ui -B ui/build -G Ninja && cmake
+  --build ui/build`. Verify the Qt5 path with
+  `-DCMAKE_DISABLE_FIND_PACKAGE_Qt6=ON` in a separate build dir.
+- `ui/` owns the `VAPlayer` CMake project; it is **not** wired into the core
+  build. `CMAKE_AUTOUIC_SEARCH_PATHS` is set to `ui/` so `#include
+  "ui/ui_MainWindow.h"` resolves.
+- Qt5 compatibility: guard renamed signal overloads with
+  `#if QT_VERSION >= QT_VERSION_CHECK(6,0,0)` — `QProcess::errorOccurred` /
+  `QProcess::finished`, and socket `errorOccurred` (Qt5 uses `error` via
+  `QOverload<...>::of(...)`). Qt5 emits deprecation warnings for these; that
+  is expected.
+- QMP `send-key` takes `keys` as an array of **KeyValue union objects**:
+  `[{"type":"qcode","data":"volumeup"}]`, not bare strings. Bare strings fail
+  with "Invalid parameter type for 'keys[0]', expected: object". Valid qcodes
+  for the sidebar: `volumeup`, `volumedown`, `power`, `sleep`, `wake`.
+- `QmpClient::replyReceived(id, result)` emits the **inner value of the
+  `return` member**, so an accepted `stop`/`cont` yields an empty object.
+  Rejections arrive via `errorOccurred`, not as a reply.
+- QMP socket path: `-qmp unix:<path>,server=on,wait=off` (Linux/macOS) or
+  `pipe:<name>,server=on,wait=off` (Windows). The socket file appears a moment
+  after the process starts — retry the connect.
+- The pruned core has no `user` (slirp) netdev; `EmulatorRunner` probes
+  `-netdev help` and falls back to `socket,id=n0,listen=:0`. Default NIC
+  `e1000e` is absent, so always name `virtio-net-pci` explicitly.
+- Tests: `cd ui/build && QT_QPA_PLATFORM=offscreen ctest`. The
+  `core_integration` suite drives a real `vaplayer-core` (found via
+  `VAPLAYER_CORE`, else `../core/build/vaplayer-core`) and skips cleanly when
+  the binary is absent — a fresh clone shows it passing in ~0.02 s.
+- GUI render check: run under `Xvfb :N -screen 0 1280x800x24` with
+  `QT_QPA_PLATFORM=xcb` (NOT `offscreen`, which renders nothing) and capture
+  with `import -window root`. A leftover exported `QT_QPA_PLATFORM=offscreen`
+  in the shell silently produces blank screenshots.
+- Segfault class to avoid: creating a per-poll `QTcpSocket` and capturing the
+  raw pointer in a `QTimer::singleShot` while also `deleteLater()`-ing it. Use
+  one persistent member socket instead.
+- Qt stylesheet: a `QLabel` child paints its own background over a parent
+  frame; set `background: transparent` on the label or the frame colour (e.g.
+  the black screen area) is hidden.
