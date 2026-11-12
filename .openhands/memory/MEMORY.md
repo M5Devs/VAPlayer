@@ -8,7 +8,8 @@ of source; `core/build/` and `core/pyvenv/` are gitignored).
 ## Build
 From `core/build`:
 ```
-../configure --target-list=x86_64-softmmu --disable-docs --disable-guest-agent \
+../configure --target-list=x86_64-softmmu --enable-virtfs \
+  --disable-docs --disable-guest-agent \
   --disable-tools --disable-sdl --disable-gtk --disable-vnc --disable-opengl \
   --disable-spice --disable-curl --disable-libssh --disable-usb-redir \
   --disable-libusb --disable-brlapi --disable-curses --disable-capstone \
@@ -54,6 +55,21 @@ ninja          # -> build/vaplayer-core (~76 MB)
 - Prefer many small `python3 - <<'PY'` patches over large heredocs (a big
   heredoc silently kept stale content once).
 
+## Runtime firmware bundle (CI + release)
+- A relocated core resolves firmware under
+  `"$exec_dir/qemu-bundle/<prefix>/share/qemu"` (`CONFIG_PREFIX=/usr/local`).
+  Without it the core exits at once with `could not load PC BIOS
+  'bios-256k.bin'` and never opens QMP. `build/qemu-bundle/` holds **symlinks
+  into the source tree**, so copy `core/pc-bios` (not the symlinked dir) into
+  that path. Helpers: `.github/scripts/stage-core.sh`,
+  `.github/scripts/smoke-core.sh` (boots q35 + QMP `query-status`).
+- `-device help` passing proves nothing about booting: it needs no firmware.
+- Workflows: `.github/workflows/{ci,release}.yml`. CI jobs `core`→`ui`
+  (artifact handoff) + `tools`; release on `v*` tags. Core build ~3 min on
+  ubuntu-24.04. `--enable-virtfs` + `--disable-slirp` (slirp intentionally
+  absent). `gh release create` accepts `--notes` with `--generate-notes`
+  (prepends). Tag push is the only trigger to publish.
+
 ## Git
 - `origin` is `https://github.com/M5Devs/VAPlayer.git`, branch `main`.
 - Push with the token in the URL:
@@ -89,10 +105,13 @@ ninja          # -> build/vaplayer-core (~76 MB)
 - The pruned core has no `user` (slirp) netdev; `EmulatorRunner` probes
   `-netdev help` and falls back to `socket,id=n0,listen=:0`. Default NIC
   `e1000e` is absent, so always name `virtio-net-pci` explicitly.
-- Tests: `cd ui/build && QT_QPA_PLATFORM=offscreen ctest`. The
-  `core_integration` suite drives a real `vaplayer-core` (found via
-  `VAPLAYER_CORE`, else `../core/build/vaplayer-core`) and skips cleanly when
-  the binary is absent — a fresh clone shows it passing in ~0.02 s.
+- Tests: `cd ui/build && QT_QPA_PLATFORM=offscreen ctest`. `core_integration`
+  drives a real `vaplayer-core`: `VAPLAYER_CORE` wins, else the compiled-in
+  `VAPLAYER_DEFAULT_CORE` (`ui/tests/CMakeLists.txt`). It skips only when no
+  core was requested; an unusable *explicit* path fails. Beware `QSKIP` exits
+  0, so a skip looks like a pass — a test finishing far faster in CI than
+  locally is skipping. **Do not set `VAPLAYER_CORE` via the ctest `ENVIRONMENT`
+  property**: it shadows the caller's env and breaks the CI artifact handoff.
 - GUI render check: run under `Xvfb :N -screen 0 1280x800x24` with
   `QT_QPA_PLATFORM=xcb` (NOT `offscreen`, which renders nothing) and capture
   with `import -window root`. A leftover exported `QT_QPA_PLATFORM=offscreen`
@@ -104,35 +123,7 @@ ninja          # -> build/vaplayer-core (~76 MB)
   frame; set `background: transparent` on the label or the frame colour (e.g.
   the black screen area) is hidden.
 
-## tools/ (Task C) — provisioning, ARM bridge, V-Flash  [commit c033cb8]
-- Run tests: `/usr/bin/python3 -m pytest tools/tests -q` (137 tests, real
-  artifacts, no mocks). `/usr/local/bin/python3` has NO pytest.
-- `tools/vaplayer_tools/`: shell, partition (MBR/GPT), ext4 (debugfs engine),
-  qcow2, android (build.prop/profiles/sparse), image (ISO→system.img→qcow2),
-  flashzip (edify + Magisk), nativebridge (libndk_translation injector).
-- CLIs: `tools/fetch_image.{sh,py}`, `tools/inject_arm.{sh,py}`,
-  `tools/bin/vflash` (+ `tools/vflash/{engine,cli}.py`). Docs: `tools/README.md`.
-- **debugfs pitfalls (both fixed, both silent-fatal):** (1) `set_inode_field
-  mode` writes the WHOLE st_mode — chmod must OR in the type bits or e2fsck
-  deletes the file as "bad type"; (2) debugfs never fixes superblock free-block
-  counters, so every write batch ends with `e2fsck -fy` (`Ext4Image.flush()`).
-- `unsquashfs -d DIR` does not create missing parents. Nested prebuilt paths
-  must be preserved or 32/64-bit `libndk_translation.so` collide. Edify args
-  split on top-level commas, not quote-scanning. A stub `updater-script` must
-  fall through to the shell/flat payload path.
-- Loop/mount still unusable ⇒ offline debugfs editing is the only route.
 
-## ui/ provisioning (Task D) — V-Flash + ROM Manager  [see 2026-11-12.md]
-- New: `ui/tools/ToolRunner.{h,cpp}` (async QProcess wrapper + static output
-  parsers), `ui/ui/VFlashDialog.{h,cpp}`, `ui/ui/RomManagerDialog.{h,cpp}`,
-  `ui/tests/test_provisioning.cpp` (16 cases, incl. a real flash).
-- `MainWindow.ui` sets `objectName` on every sidebar button (shared
-  `secondaryButton`/`ghostButton` QSS ids), so `findChild("vflashButton")` is
-  null — look buttons up by `text()`. `ui->vflashButton` still works.
-- `vflash` maps the image root onto `/system`: edify `/system/bin/x` → `/bin/x`.
-- Presets in `RomManagerDialog::presets()` mirror `tools` known images:
-  `android-x86-9` (default), `android-x86-7.1`, `blissos-15`, local ISO.
-- Tests: `cd ui/build && ctest` = 4/4; `tools` pytest = 138 passed.
 
 ## ui/ Task E — Quick Controls, Drag&Drop, Shared Folder, Keymapper
 - New modules: `ui/keymapper/{Keymap,KeymapperEngine,KeymapperOverlay}`,
