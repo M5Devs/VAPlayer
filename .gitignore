@@ -3,3 +3,19 @@ core/build/
 core/pyvenv/
 *.o
 *.a
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+.venv/
+venv/
+
+# Provisioning artifacts
+*.qcow2
+*.raw
+*.img
+*.iso
+*.sfs
+*.zip

@@ -1,0 +1,26 @@
+#!/bin/sh
+# VAPlayer V-Flash core — vflash command
+#
+# Copyright (C) 2026 VAPlayer contributors
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# Usage: vflash --image android.qcow2 --flash magisk.zip
+# Add tools/bin to PATH to invoke as `vflash`.
+
+set -eu
+
+here=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+
+PY=${VAPLAYER_PYTHON:-}
+if [ -z "$PY" ]; then
+    if command -v python3 >/dev/null 2>&1; then
+        PY=python3
+    elif command -v python >/dev/null 2>&1; then
+        PY=python
+    else
+        echo "vflash: python3 is required but was not found" >&2
+        exit 1
+    fi
+fi
+
+exec "$PY" "$here/vflash/cli.py" "$@"
