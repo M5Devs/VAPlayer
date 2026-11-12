@@ -1,0 +1,157 @@
+/*
+ * VAPlayer - end-to-end core bridge integration test
+ *
+ * Copyright (C) 2026 VAPlayer contributors
+ *
+ * This program is free software: you can redistribute it and/or modify it under
+ * the terms of the GNU General Public License as published by the Free Software
+ * Foundation, either version 3 of the License, or (at your option) any later
+ * version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+ * FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
+ * details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+#include "core_bridge/QmpClient.h"
+#include "process/EmulatorRunner.h"
+
+#include <QCoreApplication>
+#include <QFileInfo>
+#include <QJsonDocument>
+#include <QSignalSpy>
+#include <QTest>
+
+/**
+ * Drives the real EmulatorRunner and QmpClient against an actual vaplayer-core
+ * binary.  The test is skipped when the binary is not present, so a UI-only
+ * checkout still passes.
+ */
+class TestCoreIntegration : public QObject
+{
+    Q_OBJECT
+
+private slots:
+    void initTestCase();
+
+    void handshakeAndStatusRoundTrip();
+    void controlCommandsAreAccepted();
+
+private:
+    QString m_corePath;
+};
+
+void TestCoreIntegration::initTestCase()
+{
+    // Allow an explicit override, otherwise look beside the build directory.
+    m_corePath = qEnvironmentVariable("VAPLAYER_CORE");
+    if (m_corePath.isEmpty()) {
+        const QString candidate =
+            QCoreApplication::applicationDirPath()
+            + QStringLiteral("/../../core/build/vaplayer-core");
+        if (QFileInfo::exists(candidate))
+            m_corePath = QFileInfo(candidate).canonicalFilePath();
+    }
+
+    if (m_corePath.isEmpty() || !QFileInfo(m_corePath).isExecutable())
+        QSKIP("vaplayer-core not found; set VAPLAYER_CORE to run this test");
+}
+
+void TestCoreIntegration::handshakeAndStatusRoundTrip()
+{
+    EmulatorConfig config;
+    config.headless = true;
+    config.enableSound = false;      // keep the guest device set minimal
+    config.enableNetwork = false;
+    config.enableGpu = false;
+    config.enableTablet = false;
+    config.emulatorPath = m_corePath;
+
+    EmulatorRunner runner;
+    runner.setConfig(config);
+
+    QSignalSpy stateSpy(&runner, &EmulatorRunner::stateChanged);
+    QVERIFY(runner.start());
+    QTRY_VERIFY_WITH_TIMEOUT(stateSpy.count() >= 1, 10000);
+
+    const QString endpoint = runner.qmpEndpoint();
+    QVERIFY(!endpoint.isEmpty());
+
+    QmpClient client;
+    QSignalSpy connectedSpy(&client, &QmpClient::connected);
+    QSignalSpy errorSpy(&client, &QmpClient::errorOccurred);
+
+    // The socket appears a moment after the process starts.
+    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(endpoint), 10000);
+    client.connectToServer(endpoint);
+
+    QTRY_VERIFY_WITH_TIMEOUT(client.isReady(), 10000);
+    QCOMPARE(connectedSpy.count(), 1);
+
+    QSignalSpy replySpy(&client, &QmpClient::replyReceived);
+    QVERIFY(client.sendCommand(QStringLiteral("query-status")) > 0);
+    QTRY_VERIFY_WITH_TIMEOUT(replySpy.count() >= 1, 10000);
+
+    const QJsonObject status = replySpy.takeFirst().at(1).toJsonObject();
+    QVERIFY(status.contains(QStringLiteral("status")));
+
+    client.disconnectFromServer();
+    runner.stop(5000);
+    QTRY_VERIFY_WITH_TIMEOUT(!runner.isRunning(), 10000);
+}
+
+void TestCoreIntegration::controlCommandsAreAccepted()
+{
+    EmulatorConfig config;
+    config.headless = true;
+    config.enableSound = false;
+    config.enableNetwork = false;
+    config.enableGpu = false;
+    config.enableTablet = false;
+    config.emulatorPath = m_corePath;
+
+    EmulatorRunner runner;
+    runner.setConfig(config);
+    QVERIFY(runner.start());
+
+    QmpClient client;
+    QSignalSpy errorSpy(&client, &QmpClient::errorOccurred);
+    const QString endpoint = runner.qmpEndpoint();
+    QTRY_VERIFY_WITH_TIMEOUT(QFileInfo::exists(endpoint), 10000);
+    client.connectToServer(endpoint);
+    QTRY_VERIFY_WITH_TIMEOUT(client.isReady(), 10000);
+
+    // Every command the sidebar can issue must be accepted by the core.
+    // replyReceived carries the value of the "return" member, so an accepted
+    // command yields an (often empty) object and a rejection is reported
+    // through errorOccurred instead.
+    QSignalSpy replySpy(&client, &QmpClient::replyReceived);
+
+    QVERIFY(client.stop() > 0);
+    QTRY_VERIFY_WITH_TIMEOUT(replySpy.count() >= 1, 10000);
+    replySpy.takeFirst();
+
+    QVERIFY(client.cont() > 0);
+    QTRY_VERIFY_WITH_TIMEOUT(replySpy.count() >= 1, 10000);
+    replySpy.takeFirst();
+
+    // A malformed KeyValue union would be rejected with an error reply.
+    QVERIFY(client.sendKey(QStringLiteral("volumeup"), true) > 0);
+    QTRY_VERIFY_WITH_TIMEOUT(replySpy.count() >= 1, 10000);
+    replySpy.takeFirst();
+
+    QVERIFY2(errorSpy.isEmpty(),
+             qPrintable(errorSpy.isEmpty()
+                            ? QString()
+                            : errorSpy.first().at(0).toString()));
+
+    client.disconnectFromServer();
+    runner.stop(5000);
+}
+
+QTEST_MAIN(TestCoreIntegration)
+#include "test_core_integration.moc"
