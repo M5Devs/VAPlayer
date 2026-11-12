@@ -8,9 +8,9 @@
 #   * ui/    - the Qt front end and its test suites
 #   * tools/ - the Python provisioning tools and their test suite
 #
-# The core is the slow step, so it is built once and handed to the UI job as an
-# artifact.  That is what lets the UI's core_integration test run for real
-# instead of skipping.
+# The core is the slow step, so it is built once, staged with the firmware
+# bundle it needs at runtime, and handed to the UI job as an artifact.  That is
+# what lets the UI's core_integration test run for real instead of skipping.
 
 name: CI
 
@@ -74,11 +74,19 @@ jobs:
           grep -q 'name "virtio-9p-pci"' /tmp/devices.txt \
             || { echo 'virtio-9p-pci missing from vaplayer-core'; exit 1; }
 
-      - name: Upload vaplayer-core
+      # The core loads firmware from a bundle beside the binary, so the artifact
+      # has to carry both.  Without it the core cannot start a machine.
+      - name: Stage the core with its firmware bundle
+        run: .github/scripts/stage-core.sh core "${{ github.workspace }}/core-stage"
+
+      - name: Smoke-test the staged core
+        run: .github/scripts/smoke-core.sh "${{ github.workspace }}/core-stage/vaplayer-core"
+
+      - name: Upload the staged core
         uses: actions/upload-artifact@v4
         with:
           name: vaplayer-core
-          path: core/build/vaplayer-core
+          path: core-stage
           if-no-files-found: error
 
   tools:
@@ -113,14 +121,14 @@ jobs:
             qt6-base-dev qt6-base-dev-tools qt6-qpa-plugins \
             libgl1-mesa-dev
 
-      - name: Download vaplayer-core
+      - name: Download the staged core
         uses: actions/download-artifact@v4
         with:
           name: vaplayer-core
-          path: core/build
+          path: core-stage
 
       - name: Make the core executable
-        run: chmod +x core/build/vaplayer-core
+        run: chmod +x core-stage/vaplayer-core
 
       - name: Configure the UI
         run: cmake -S ui -B ui/build -DCMAKE_BUILD_TYPE=Release
@@ -132,5 +140,5 @@ jobs:
         working-directory: ui/build
         env:
           QT_QPA_PLATFORM: offscreen
-          VAPLAYER_CORE: ${{ github.workspace }}/core/build/vaplayer-core
+          VAPLAYER_CORE: ${{ github.workspace }}/core-stage/vaplayer-core
         run: ctest --output-on-failure

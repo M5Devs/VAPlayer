@@ -4,12 +4,17 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 #
 # Publishes a GitHub Release whenever a version tag is pushed.  The archive
-# contains the two binaries the project ships plus the keymapper profiles the
-# UI looks for beside itself:
+# contains the two binaries the project ships plus everything they load at
+# runtime:
 #
-#   bin/vaplayer-core        pruned QEMU core (x86_64-softmmu, VirtFS, slirp)
-#   bin/vaplayer-ui          Qt front end
-#   bin/profiles/default.json
+#   bin/vaplayer-core                     pruned QEMU core (x86_64-softmmu)
+#   bin/qemu-bundle/usr/local/share/qemu  firmware and keymaps the core loads
+#   bin/vaplayer-ui                       Qt front end
+#   bin/profiles/default.json             keymapper profile the UI looks for
+#
+# The bundle path is not cosmetic: a relocated core resolves its data files
+# under "$exec_dir/qemu-bundle/<prefix>/share/qemu".  Ship it anywhere else and
+# the core cannot find bios-256k.bin and will not boot a machine.
 #
 # Qt6 is a runtime dependency of vaplayer-ui and is intentionally not bundled;
 # the release notes say which distribution packages provide it.
@@ -54,8 +59,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             build-essential ninja-build pkg-config python3 python3-venv \
-            libglib2.0-dev libpixman-1-dev zlib1g-dev libattr1-dev cmake qt6-base-dev qt6-base-dev-tools \
-            qt6-qpa-plugins libgl1-mesa-dev
+            libglib2.0-dev libpixman-1-dev zlib1g-dev libattr1-dev \
+            cmake qt6-base-dev qt6-base-dev-tools qt6-qpa-plugins \
+            libgl1-mesa-dev
 
       - name: Configure the core
         working-directory: core
@@ -80,13 +86,6 @@ jobs:
           cmake -S ui -B ui/build -DCMAKE_BUILD_TYPE=Release
           cmake --build ui/build -j"$(nproc)"
 
-      - name: Smoke-test the core
-        working-directory: core
-        run: |
-          ./build/vaplayer-core -device help | tee /tmp/devices.txt
-          grep -q 'name "virtio-9p-pci"' /tmp/devices.txt \
-            || { echo 'virtio-9p-pci missing from vaplayer-core'; exit 1; }
-
       - name: Assemble the release tree
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -95,13 +94,27 @@ jobs:
           root="vaplayer-${VERSION}-linux-x86_64"
           rm -rf "$root" "$root.tar.gz" "$root.tar.gz.sha256"
 
-          install -D -m 0755 core/build/vaplayer-core "$root/bin/vaplayer-core"
-          install -D -m 0755 ui/build/vaplayer-ui "$root/bin/vaplayer-ui"
+          .github/scripts/stage-core.sh core "$root/bin"
+          install -m 0755 ui/build/vaplayer-ui "$root/bin/vaplayer-ui"
           install -D -m 0644 ui/profiles/default.json \
             "$root/bin/profiles/default.json"
-          install -D -m 0644 README.md "$root/README.md"
-          install -D -m 0644 COPYING "$root/COPYING"
+          install -m 0644 README.md COPYING "$root/"
+          echo "$VERSION" > "$root/VERSION"
 
+      # A release that cannot boot a machine is worse than no release.
+      - name: Smoke-test the packaged core
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          .github/scripts/smoke-core.sh \
+            "vaplayer-${VERSION}-linux-x86_64/bin/vaplayer-core"
+
+      - name: Create the archive
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -eu
+          root="vaplayer-${VERSION}-linux-x86_64"
           tar -czf "$root.tar.gz" "$root"
           sha256sum "$root.tar.gz" > "$root.tar.gz.sha256"
 
@@ -110,11 +123,15 @@ jobs:
           cat > /tmp/extra-notes.md <<'EOF'
           ## Contents
 
-          | File | Description |
+          | Path | Description |
           | --- | --- |
-          | `bin/vaplayer-core` | Pruned QEMU core, `x86_64-softmmu`, VirtFS and slirp enabled |
+          | `bin/vaplayer-core` | Pruned QEMU core, `x86_64-softmmu`, VirtFS enabled |
+          | `bin/qemu-bundle/` | Firmware and keymaps the core loads at runtime |
           | `bin/vaplayer-ui` | Qt front end |
           | `bin/profiles/default.json` | Default keymapper profile |
+
+          Unpack the archive and run `bin/vaplayer-ui`. Keep the directory layout
+          intact: the core finds its firmware through `bin/qemu-bundle/`.
 
           ## Requirements
 
@@ -123,8 +140,8 @@ jobs:
           * Debian/Ubuntu: `qt6-base-dev-tools qt6-qpa-plugins`
           * Fedora: `qt6-qtbase-gui`
 
-          `vaplayer-core` needs `libglib-2.0`, `libpixman-1`, `zlib` and
-          `libslirp` at runtime, all of which are present on a stock desktop.
+          `vaplayer-core` needs `libglib-2.0`, `libpixman-1` and `zlib` at
+          runtime, all of which are present on a stock desktop.
 
           ## Verify
 
