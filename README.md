@@ -7,7 +7,9 @@ pruned QEMU source tree.
 
 - `core/` — trimmed QEMU tree (upstream `qemu.git`) used to build the
   `vaplayer-core` binary.
-- `ui/` — Qt 6 desktop front-end that drives `vaplayer-core` over QMP.
+- `ui/` — Qt 6 desktop front-end that drives `vaplayer-core` over QMP. The
+  sidebar exposes **V-Flash** (inspect / flash an image) and **ROM Manager**
+  (download, prepare, and inject the ARM bridge). See `ui/README.md`.
 - `tools/` — provisioning tools: fetch and unpack a base Android image,
   inject ARM translation, and flash images offline. See `tools/README.md`.
 - `COPYING`, `COPYING.LIB` — GPLv3 / LGPLv2 licenses inherited from QEMU.

@@ -251,6 +251,52 @@
         </spacer>
        </item>
        <item>
+        <widget class="QLabel" name="provisionSectionLabel">
+         <property name="text">
+          <string>PROVISIONING</string>
+         </property>
+         <property name="objectName">
+          <string>sectionLabel</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="vflashButton">
+         <property name="text">
+          <string>V-Flash</string>
+         </property>
+         <property name="objectName">
+          <string>secondaryButton</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QPushButton" name="romManagerButton">
+         <property name="text">
+          <string>ROM Manager</string>
+         </property>
+         <property name="objectName">
+          <string>secondaryButton</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <spacer name="provisionSpacer">
+         <property name="orientation">
+          <enum>Qt::Vertical</enum>
+         </property>
+         <property name="sizeType">
+          <enum>QSizePolicy::Fixed</enum>
+         </property>
+         <property name="sizeHint" stdset="0">
+          <size>
+           <width>0</width>
+           <height>6</height>
+          </size>
+         </property>
+        </spacer>
+       </item>
+       <item>
         <widget class="QLabel" name="connectionSectionLabel">
          <property name="text">
           <string>CONNECTION</string>

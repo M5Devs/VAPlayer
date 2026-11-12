@@ -121,3 +121,15 @@ ninja          # -> build/vaplayer-core (~76 MB)
   split on top-level commas, not quote-scanning. A stub `updater-script` must
   fall through to the shell/flat payload path.
 - Loop/mount still unusable ⇒ offline debugfs editing is the only route.
+
+## ui/ provisioning (Task D) — V-Flash + ROM Manager  [see 2026-11-12.md]
+- New: `ui/tools/ToolRunner.{h,cpp}` (async QProcess wrapper + static output
+  parsers), `ui/ui/VFlashDialog.{h,cpp}`, `ui/ui/RomManagerDialog.{h,cpp}`,
+  `ui/tests/test_provisioning.cpp` (16 cases, incl. a real flash).
+- `MainWindow.ui` sets `objectName` on every sidebar button (shared
+  `secondaryButton`/`ghostButton` QSS ids), so `findChild("vflashButton")` is
+  null — look buttons up by `text()`. `ui->vflashButton` still works.
+- `vflash` maps the image root onto `/system`: edify `/system/bin/x` → `/bin/x`.
+- Presets in `RomManagerDialog::presets()` mirror `tools` known images:
+  `android-x86-9` (default), `android-x86-7.1`, `blissos-15`, local ISO.
+- Tests: `cd ui/build && ctest` = 4/4; `tools` pytest = 138 passed.

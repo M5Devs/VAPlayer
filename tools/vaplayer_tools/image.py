@@ -49,6 +49,13 @@ KNOWN_IMAGES: dict[str, dict[str, str]] = {
         "kind": "iso",
         "android": "8.1",
     },
+    "android-x86-7.1": {
+        "label": "Android-x86 7.1-r5 (x86_64, legacy / low-end)",
+        "url": "https://sourceforge.net/projects/android-x86/files/"
+               "Release%207.1/android-x86_64-7.1-r5.iso/download",
+        "kind": "iso",
+        "android": "7.1",
+    },
     "blissos-15": {
         "label": "BlissOS 15.8.6 vanilla (x86_64, Android 12L base)",
         "url": "https://sourceforge.net/projects/blissos-dev/files/Beta/"

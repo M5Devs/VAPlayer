@@ -58,6 +58,10 @@ private slots:
     void onRotateClicked();
     void onSettingsClicked();
     void onAdbConnectClicked();
+    void onVFlashClicked();
+    void onRomManagerClicked();
+
+    void onRomImageReady(const QString &imagePath);
 
     void onRunnerStateChanged(EmulatorRunner::State state);
     void onRunnerError(const QString &message);
@@ -84,6 +88,9 @@ private:
     void setStatusMessage(const QString &message);
     void appendLog(const QString &line);
 
+    /** Apply a new disk image path everywhere it is used and persist it. */
+    void applyDiskImage(const QString &imagePath);
+
     Ui::MainWindow *ui = nullptr;
     EmulatorRunner *m_runner = nullptr;
     QmpClient *m_qmp = nullptr;
@@ -96,6 +103,9 @@ private:
 
     /** Persisted, user-editable emulator settings. */
     EmulatorConfig m_config;
+
+    /** Last package chosen in V-Flash, remembered across dialog sessions. */
+    QString m_lastFlashPackage;
 };
 
 #endif // VAPLAYER_MAINWINDOW_H

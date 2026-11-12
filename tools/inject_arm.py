@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -85,6 +86,14 @@ def _log(args):
     return log
 
 
+def _is_qcow2(path: str) -> bool:
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(4) == b"QFI\xfb"
+    except OSError:
+        return False
+
+
 def _flatten_if_needed(path: str, extract_to: str | None) -> tuple[str, str | None]:
     """Return (working raw path, temp path to clean up).
 
@@ -126,11 +135,13 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: no such image: {image_path}", file=sys.stderr)
         return 1
 
+    cleanup = None
     try:
         if args.verify:
             _print_verify(image_path)
             return 0
 
+        qcow2_source = _is_qcow2(image_path) and not args.extract
         raw, cleanup = _flatten_if_needed(image_path, args.extract)
         if raw != image_path:
             log(f"flattened {image_path} -> {raw}")
@@ -155,8 +166,12 @@ def main(argv: list[str] | None = None) -> int:
         )
         print("\n" + report.summary())
 
-        if args.extract:
-            log(f"injected raw image written to {raw}")
+        if qcow2_source:
+            # Writing the flattened raw back keeps the original qcow2 in place,
+            # which is what the UI and the emulator expect.
+            log(f"repacking {raw} -> {image_path} (qcow2)")
+            qcow2.convert(raw, image_path, fmt="qcow2",
+                          compress=False, sparse=True)
 
         print("\nBridge installed. Re-verify with:")
         print(f"  tools/inject_arm.sh --image {image_path} --verify")
@@ -164,18 +179,29 @@ def main(argv: list[str] | None = None) -> int:
     except ToolsError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
+    finally:
+        if cleanup:
+            try:
+                os.unlink(cleanup)
+            except OSError:
+                pass
 
 
 def _print_verify(image_path: str) -> None:
-    # If the target is a qcow2 we cannot read ext4 from it directly.
-    with open(image_path, "rb") as fh:
-        magic = fh.read(4)
-    if magic == b"QFI\xfb":
-        print(f"{image_path}: qcow2 image; flatten it first "
-              "(inject_arm --image X --extract X.raw) then --verify the raw file")
+    # The ext4 layer cannot read a qcow2 directly, so flatten to a scratch
+    # file for the check and remove it afterwards.
+    if _is_qcow2(image_path):
+        with tempfile.TemporaryDirectory(prefix="vflash-verify-") as tmp:
+            raw = os.path.join(tmp, "flattened.raw")
+            qcow2.to_raw(image_path, raw)
+            _print_verify_raw(image_path, raw)
         return
-    result = nativebridge.verify(image_path)
-    print(f"image:            {result['image']}")
+    _print_verify_raw(image_path, image_path)
+
+
+def _print_verify_raw(image_path: str, raw: str) -> None:
+    result = nativebridge.verify(raw)
+    print(f"image:            {image_path}")
     print(f"bridge installed: {result.get('bridge_installed')}")
     if "error" in result:
         print(f"error:            {result['error']}")

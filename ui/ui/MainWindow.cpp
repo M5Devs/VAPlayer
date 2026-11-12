@@ -20,6 +20,8 @@
 #include "ui/MainWindow.h"
 #include "ui/ui_MainWindow.h"
 #include "ui/SettingsDialog.h"
+#include "ui/VFlashDialog.h"
+#include "ui/RomManagerDialog.h"
 
 #include "core_bridge/QmpClient.h"
 #include "process/EmulatorRunner.h"
@@ -309,6 +311,10 @@ void MainWindow::setupConnections()
             this, &MainWindow::onSettingsClicked);
     connect(ui->adbConnectButton, &QPushButton::clicked,
             this, &MainWindow::onAdbConnectClicked);
+    connect(ui->vflashButton, &QPushButton::clicked,
+            this, &MainWindow::onVFlashClicked);
+    connect(ui->romManagerButton, &QPushButton::clicked,
+            this, &MainWindow::onRomManagerClicked);
 
     connect(m_runner, &EmulatorRunner::stateChanged,
             this, &MainWindow::onRunnerStateChanged);
@@ -442,6 +448,57 @@ void MainWindow::onSettingsClicked()
 
     if (m_runner->isRunning())
         appendLog(tr("Note: changes take effect after the next power-on."));
+}
+
+void MainWindow::onVFlashClicked()
+{
+    VFlashDialog dialog(this);
+    dialog.setDefaultImagePath(m_config.diskImage);
+    dialog.setPackagePath(m_lastFlashPackage);
+
+    connect(&dialog, &VFlashDialog::flashCompleted, this,
+            [this](const QString &image) {
+                appendLog(tr("V-Flash finished for %1.").arg(image));
+                // A flashed image may be a different file than the current one.
+                applyDiskImage(image);
+            });
+
+    dialog.exec();
+    // Remember the package so the next visit starts where we left off.
+    m_lastFlashPackage = dialog.packagePath();
+}
+
+void MainWindow::onRomManagerClicked()
+{
+    RomManagerDialog dialog(this);
+    if (!m_config.diskImage.isEmpty())
+        dialog.setOutputPath(m_config.diskImage);
+
+    connect(&dialog, &RomManagerDialog::imageReady,
+            this, &MainWindow::onRomImageReady);
+
+    dialog.exec();
+}
+
+void MainWindow::onRomImageReady(const QString &imagePath)
+{
+    appendLog(tr("ROM prepared: %1").arg(imagePath));
+    applyDiskImage(imagePath);
+    setStatusMessage(tr("ROM ready — press Power On."));
+}
+
+void MainWindow::applyDiskImage(const QString &imagePath)
+{
+    if (imagePath.isEmpty() || imagePath == m_config.diskImage)
+        return;
+
+    m_config.diskImage = imagePath;
+    m_runner->setConfig(m_config);
+
+    QSettings settings;
+    settings.setValue(QStringLiteral("emulator/diskImage"), imagePath);
+
+    appendLog(tr("Disk image set to %1.").arg(imagePath));
 }
 
 void MainWindow::onAdbConnectClicked()

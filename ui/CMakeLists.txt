@@ -61,16 +61,22 @@ message(STATUS "VAPlayer UI: building against Qt${VAPLAYER_QT_VERSION}")
 set(VAPLAYER_SOURCES
     core_bridge/QmpClient.cpp
     process/EmulatorRunner.cpp
+    tools/ToolRunner.cpp
     ui/MainWindow.cpp
     ui/SettingsDialog.cpp
+    ui/VFlashDialog.cpp
+    ui/RomManagerDialog.cpp
     main.cpp
 )
 
 set(VAPLAYER_HEADERS
     core_bridge/QmpClient.h
     process/EmulatorRunner.h
+    tools/ToolRunner.h
     ui/MainWindow.h
     ui/SettingsDialog.h
+    ui/VFlashDialog.h
+    ui/RomManagerDialog.h
 )
 
 set(VAPLAYER_FORMS

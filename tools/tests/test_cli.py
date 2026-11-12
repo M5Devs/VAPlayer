@@ -30,7 +30,7 @@ import sys
 
 import pytest
 
-from conftest import TOOLS_DIR, requires_e2fsprogs
+from conftest import TOOLS_DIR, requires_e2fsprogs, requires_qemu_img
 
 
 def run_cli(script: str, *args: str) -> subprocess.CompletedProcess:
@@ -220,3 +220,31 @@ def test_inject_arm_no_spoof(android_like_ext4, ndk_source_dir):
     bp = Ext4Image(android_like_ext4).read_file("/build.prop")
     assert b"ro.dalvik.vm.native.bridge=libndk_translation.so" in bp
     assert b"ro.product.brand=Android-x86" in bp
+
+
+@requires_qemu_img
+def test_inject_arm_qcow2_writes_back_in_place(android_like_ext4,
+                                               ndk_source_dir, tmp_path):
+    """Injecting into a qcow2 must patch that file, not a side raw file.
+
+    Regression: the flattening step wrote to ``<image>.raw`` and never
+    repacked, so a qcow2 target was silently left unmodified.
+    """
+    from vaplayer_tools import qcow2
+
+    target = str(tmp_path / "system.qcow2")
+    qcow2.convert(android_like_ext4, target, fmt="qcow2", compress=False)
+
+    proc = run_cli("inject_arm.py", "--image", target,
+                   "--source-dir", ndk_source_dir, "--profile", "rog8")
+    assert proc.returncode == 0, proc.stderr.decode()
+
+    # No leftover raw side file.
+    assert not os.path.exists(target + ".raw")
+
+    # The qcow2 itself must now report the bridge as installed.
+    verify = run_cli("inject_arm.py", "--image", target, "--verify")
+    assert verify.returncode == 0, verify.stderr.decode()
+    assert b"bridge installed: True" in verify.stdout
+    assert b"x86_64" in verify.stdout
+
