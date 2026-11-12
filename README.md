@@ -7,7 +7,7 @@ pruned QEMU source tree.
 
 - `core/` — trimmed QEMU tree (upstream `qemu.git`) used to build the
   `vaplayer-core` binary.
-- `COPYING`, `COPYING.LIB` — GPLv2 / LGPLv2 licenses inherited from QEMU.
+- `COPYING`, `COPYING.LIB` — GPLv3 / LGPLv2 licenses inherited from QEMU.
 
 ## Pruning
 
