@@ -144,11 +144,15 @@ set_tests_properties(task_e PROPERTIES
     TIMEOUT 120
 )
 
-# The integration test needs a built vaplayer-core; it skips cleanly if absent.
+# The integration test needs a built vaplayer-core.  It reads VAPLAYER_CORE
+# from the environment so CI can point it at a staged core, and falls back to
+# this compiled-in path for an in-tree build.  Setting the variable as a test
+# property would shadow the caller's environment, so it is a compile definition
+# instead.  The test skips only when no core was requested at all.
 add_test(NAME core_integration COMMAND test_core_integration)
-set_tests_properties(core_integration PROPERTIES
-    ENVIRONMENT "VAPLAYER_CORE=${CMAKE_SOURCE_DIR}/../core/build/vaplayer-core"
-    TIMEOUT 120
+set_tests_properties(core_integration PROPERTIES TIMEOUT 120)
+target_compile_definitions(test_core_integration PRIVATE
+    VAPLAYER_DEFAULT_CORE="${CMAKE_SOURCE_DIR}/../core/build/vaplayer-core"
 )
 
 # Runs under a virtual display when the platform plugin requires one.

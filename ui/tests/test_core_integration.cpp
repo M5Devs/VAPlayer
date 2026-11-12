@@ -52,18 +52,25 @@ private:
 
 void TestCoreIntegration::initTestCase()
 {
-    // Allow an explicit override, otherwise look beside the build directory.
+    // CI passes an explicit path to a staged core.  An in-tree build has no
+    // such variable, so fall back to the location the core is built in.
     m_corePath = qEnvironmentVariable("VAPLAYER_CORE");
     if (m_corePath.isEmpty()) {
-        const QString candidate =
-            QCoreApplication::applicationDirPath()
-            + QStringLiteral("/../../core/build/vaplayer-core");
+#ifdef VAPLAYER_DEFAULT_CORE
+        const QString candidate = QStringLiteral(VAPLAYER_DEFAULT_CORE);
         if (QFileInfo::exists(candidate))
             m_corePath = QFileInfo(candidate).canonicalFilePath();
+#endif
     }
 
-    if (m_corePath.isEmpty() || !QFileInfo(m_corePath).isExecutable())
+    // No core was requested anywhere: a UI-only checkout, so skipping is
+    // correct.  If a path was given but does not work, fail rather than skip,
+    // otherwise a broken build passes CI while testing nothing.
+    if (m_corePath.isEmpty())
         QSKIP("vaplayer-core not found; set VAPLAYER_CORE to run this test");
+    QVERIFY2(QFileInfo(m_corePath).isExecutable(),
+             qPrintable(QStringLiteral("vaplayer-core is not executable: %1")
+                            .arg(m_corePath)));
 }
 
 void TestCoreIntegration::handshakeAndStatusRoundTrip()
