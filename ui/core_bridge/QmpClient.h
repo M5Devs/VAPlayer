@@ -92,6 +92,57 @@ public:
     /** Send "volume up/down" style key events through the input subsystem. */
     int sendKey(const QString &qcode, bool down);
 
+    /**
+     * Send an Android navigation key as a complete press/release pair.
+     *
+     * Android keys are not QEMU qcodes, so each maps onto the qcode whose
+     * Linux key code the Android input HAL translates to the requested
+     * Android key code:
+     *   - Back (4)        -> "esc"
+     *   - Home (3)        -> "home"
+     *   - Recent apps(187)-> "sysrq"
+     *
+     * Returns the number of commands queued, or -1 when not connected.
+     */
+    int sendAndroidKey(int androidKeyCode);
+
+    /**
+     * Android key code for a named navigation action ("back", "home",
+     * "recents"/"app_switch"), or -1 when the name is unknown.  Static so the
+     * mapping can be tested without a connection.
+     */
+    static int androidKeyCodeFor(const QString &action);
+
+    /**
+     * Synthesise a single tap at *x*,*y* in absolute coordinates (0..0x7fff).
+     * Sends an absolute move, a touch press and a touch release.
+     */
+    int sendTap(int x, int y);
+
+    /** Begin a touch contact at *x*,*y* (absolute, 0..0x7fff). */
+    int sendTouchDown(int x, int y);
+
+    /** Move the active touch contact to *x*,*y* (absolute, 0..0x7fff). */
+    int sendTouchMove(int x, int y);
+
+    /** Lift the active touch contact. */
+    int sendTouchUp();
+
+    /**
+     * Synthesise a complete touch drag from (*x1*,*y1*) to (*x2*,*y2*).
+     * Equivalent to touchDown/sendTouchMove/sendTouchUp in one command.
+     */
+    int sendDrag(int x1, int y1, int x2, int y2);
+
+    /**
+     * Send a relative pointer motion, used by the keymapper's crosshair mode
+     * to translate host mouse deltas into camera movement.
+     */
+    int sendMouseDelta(int dx, int dy);
+
+    /** Press or release a mouse button ("left", "right", "middle"). */
+    int sendMouseButton(const QString &button, bool down);
+
 signals:
     /** Emitted once the capability handshake completes successfully. */
     void connected();

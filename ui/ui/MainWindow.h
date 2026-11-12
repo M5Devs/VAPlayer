@@ -23,6 +23,7 @@
 #include <QMainWindow>
 #include <QPointer>
 
+#include "keymapper/Keymap.h"
 #include "process/EmulatorRunner.h"
 
 QT_BEGIN_NAMESPACE
@@ -31,8 +32,12 @@ QT_END_NAMESPACE
 
 class QLabel;
 class QTimer;
+class AdbClient;
+class KeymapperDialog;
+class KeymapperEngine;
 class QmpClient;
 class QTcpSocket;
+class ViewportWidget;
 
 /**
  * Top-level window: a dark themed shell with a screen viewport on the right and
@@ -48,6 +53,8 @@ public:
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
+    void keyReleaseEvent(QKeyEvent *event) override;
 
 private slots:
     void onPowerClicked();
@@ -60,6 +67,17 @@ private slots:
     void onAdbConnectClicked();
     void onVFlashClicked();
     void onRomManagerClicked();
+
+    void onBackClicked();
+    void onHomeClicked();
+    void onRecentsClicked();
+    void onScreenshotClicked();
+    void onFullscreenToggled(bool enabled);
+    void onSharedFolderClicked();
+    void onKeymapperToggled(bool enabled);
+
+    void onFilesDropped(const QStringList &paths);
+    void processNextDrop();
 
     void onRomImageReady(const QString &imagePath);
 
@@ -87,19 +105,43 @@ private:
     void updateAdbIndicator(bool connected);
     void setStatusMessage(const QString &message);
     void appendLog(const QString &line);
+    void showToast(const QString &message);
 
     /** Apply a new disk image path everywhere it is used and persist it. */
     void applyDiskImage(const QString &imagePath);
 
+    /** Route a single dropped file to install, flash or push. */
+    void handleDroppedFile(const QString &path);
+    /** Recursively push a directory into the guest's shared folder. */
+    void pushDirectory(const QString &localDir, const QString &remoteDir);
+
+    /** Load the keymap for the active game, falling back to the default. */
+    void loadKeymapForActiveGame();
+    /** Persist the active keymap and refresh the overlay. */
+    void persistActiveKeymap();
+
     Ui::MainWindow *ui = nullptr;
     EmulatorRunner *m_runner = nullptr;
     QmpClient *m_qmp = nullptr;
+    AdbClient *m_adb = nullptr;
 
     QTimer *m_adbTimer = nullptr;
     QTcpSocket *m_adbProbe = nullptr;
 
+    ViewportWidget *m_viewport = nullptr;
+    KeymapperEngine *m_keymapper = nullptr;
+    QPointer<KeymapperDialog> m_keymapperDialog;
+
     Orientation m_orientation = Orientation::Portrait;
     bool m_adbConnected = false;
+    bool m_keymapperEnabled = false;
+
+    /** Active keymap profile (per game, or the default). */
+    Keymap m_keymap;
+
+    /** Files queued for the sequential drop handler. */
+    QStringList m_dropQueue;
+    bool m_dropInProgress = false;
 
     /** Persisted, user-editable emulator settings. */
     EmulatorConfig m_config;

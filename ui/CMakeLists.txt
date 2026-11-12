@@ -60,23 +60,39 @@ message(STATUS "VAPlayer UI: building against Qt${VAPLAYER_QT_VERSION}")
 
 set(VAPLAYER_SOURCES
     core_bridge/QmpClient.cpp
+    keymapper/Keymap.cpp
+    keymapper/KeymapperEngine.cpp
+    keymapper/KeymapperOverlay.cpp
     process/EmulatorRunner.cpp
+    tools/AdbClient.cpp
     tools/ToolRunner.cpp
     ui/MainWindow.cpp
     ui/SettingsDialog.cpp
     ui/VFlashDialog.cpp
     ui/RomManagerDialog.cpp
+    ui/SharedFolderDialog.cpp
+    ui/KeymapperDialog.cpp
+    ui/DropHelper.cpp
+    ui/ViewportWidget.cpp
     main.cpp
 )
 
 set(VAPLAYER_HEADERS
     core_bridge/QmpClient.h
+    keymapper/Keymap.h
+    keymapper/KeymapperEngine.h
+    keymapper/KeymapperOverlay.h
     process/EmulatorRunner.h
+    tools/AdbClient.h
     tools/ToolRunner.h
     ui/MainWindow.h
     ui/SettingsDialog.h
     ui/VFlashDialog.h
     ui/RomManagerDialog.h
+    ui/SharedFolderDialog.h
+    ui/KeymapperDialog.h
+    ui/DropHelper.h
+    ui/ViewportWidget.h
 )
 
 set(VAPLAYER_FORMS
@@ -101,6 +117,14 @@ if(WIN32)
         WIN32_LEAN_AND_MEAN
     )
 endif()
+
+# Copy the keymapper profiles next to the build-tree binary so the shipped
+# default profile resolves during development.
+add_custom_command(TARGET vaplayer-ui POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_CURRENT_SOURCE_DIR}/profiles"
+        "$<TARGET_FILE_DIR:vaplayer-ui>/profiles"
+    COMMENT "Copying keymapper profiles")
 
 # ---------------------------------------------------------------------------
 # Link against the selected Qt major version.
@@ -136,3 +160,9 @@ if(VAPLAYER_BUILD_TESTS)
 endif()
 
 install(TARGETS vaplayer-ui RUNTIME DESTINATION bin)
+
+# Ship the keymapper profiles next to the binary so the default is found
+# through QCoreApplication::applicationDirPath().
+install(DIRECTORY profiles/
+        DESTINATION bin/profiles
+        FILES_MATCHING PATTERN "*.json")

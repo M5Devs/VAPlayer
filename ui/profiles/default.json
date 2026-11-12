@@ -1,0 +1,26 @@
+{
+    "name": "Default",
+    "taps": [
+        {
+            "key": "space",
+            "x": 30000,
+            "y": 20000,
+            "label": "Jump"
+        }
+    ],
+    "dpad": {
+        "enabled": true,
+        "up": "w",
+        "down": "s",
+        "left": "a",
+        "right": "d",
+        "x": 8000,
+        "y": 20000,
+        "radius": 4000
+    },
+    "crosshair": {
+        "enabled": false,
+        "toggleKey": "grave",
+        "sensitivity": 100
+    }
+}

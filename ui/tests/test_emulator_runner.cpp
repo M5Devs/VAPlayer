@@ -19,7 +19,39 @@
 
 #include "process/EmulatorRunner.h"
 
+#include <QFile>
+#include <QTemporaryDir>
 #include <QTest>
+
+/**
+ * Writes an executable stub that answers the capability probes the runner
+ * uses ("-netdev help" / "-device help") without being a real emulator.
+ */
+static QString writeStubEmulator(const QTemporaryDir &dir, bool withNineP)
+{
+    const QString path = dir.filePath(QStringLiteral("vaplayer-core-stub"));
+    const QString devices = withNineP
+        ? QStringLiteral("name \"virtio-9p-pci\", bus PCI, alias \"virtio-9p\"\n")
+        : QStringLiteral("name \"virtio-gpu-pci\", bus PCI\n");
+
+    const QString script = QStringLiteral(
+        "#!/bin/sh\n"
+        "case \"$1\" in\n"
+        "  -netdev) echo \"user\";;\n"
+        "  -device) printf '%1';;\n"
+        "esac\n"
+        "exit 0\n").arg(devices);
+
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text))
+        return QString();
+    file.write(script.toUtf8());
+    file.close();
+    file.setPermissions(QFile::ReadOwner | QFile::WriteOwner | QFile::ExeOwner
+                        | QFile::ReadGroup | QFile::ExeGroup
+                        | QFile::ReadOther | QFile::ExeOther);
+    return path;
+}
 
 class TestEmulatorRunner : public QObject
 {
@@ -84,6 +116,73 @@ private slots:
         QVERIFY(!args.contains(QStringLiteral("virtio-sound-pci,audiodev=snd0")));
         QVERIFY(!args.contains(QStringLiteral("virtio-net-pci,netdev=n0")));
         QVERIFY(!args.contains(QStringLiteral("virtio-tablet-pci")));
+    }
+
+    void sharedFolderIsExportedOverVirtfs()
+    {
+        // The 9p export is gated on the core advertising the device, so drive
+        // the probe with a stub emulator that reports it.
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString stub = writeStubEmulator(dir, true);
+
+        EmulatorConfig config;
+        config.emulatorPath = stub;
+        config.sharedFolderPath = QStringLiteral("/home/user/shared");
+
+        EmulatorRunner runner;
+        runner.setConfig(config);
+        const QStringList args = runner.buildArguments();
+
+        const int fsdevIndex = args.indexOf(QStringLiteral("-fsdev"));
+        QVERIFY(fsdevIndex >= 0);
+        QVERIFY(args.value(fsdevIndex + 1)
+                    .contains(QStringLiteral("path=/home/user/shared")));
+        QVERIFY(args.join(QLatin1Char(' '))
+                    .contains(QStringLiteral("virtio-9p-pci,fsdev=vaplayer_fs")));
+    }
+
+    void sharedFolderIsSkippedWhenCoreLacks9p()
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString stub = writeStubEmulator(dir, false);
+
+        EmulatorConfig config;
+        config.emulatorPath = stub;
+        config.sharedFolderPath = QStringLiteral("/home/user/shared");
+
+        EmulatorRunner runner;
+        runner.setConfig(config);
+        const QStringList args = runner.buildArguments();
+
+        QVERIFY(!args.contains(QStringLiteral("-fsdev")));
+        QVERIFY(!args.join(QLatin1Char(' ')).contains(QStringLiteral("virtio-9p-pci")));
+    }
+
+    void sharedFolderIsAbsentByDefault()
+    {
+        EmulatorConfig config;
+        EmulatorRunner runner;
+        runner.setConfig(config);
+        const QStringList args = runner.buildArguments();
+
+        QVERIFY(!args.contains(QStringLiteral("-fsdev")));
+        QVERIFY(!args.join(QLatin1Char(' ')).contains(QStringLiteral("virtio-9p-pci")));
+    }
+
+    void multitouchAndKeyboardDevicesAreRequested()
+    {
+        EmulatorConfig config;
+        config.enableMultitouch = true;
+        config.enableKeyboard = true;
+
+        EmulatorRunner runner;
+        runner.setConfig(config);
+        const QStringList args = runner.buildArguments();
+
+        // With no core binary to probe, supportsDevice() assumes presence.
+        QVERIFY(args.contains(QStringLiteral("virtio-keyboard-pci")));
     }
 
     void diskImageIsAttachedAsVirtioBlock()

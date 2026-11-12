@@ -35,6 +35,32 @@ constexpr char kKeyReturn[] = "return";
 constexpr char kKeyError[] = "error";
 constexpr char kKeyEvent[] = "event";
 constexpr char kKeyData[] = "data";
+
+/** Absolute pointer move to *x*,*y* (0..0x7fff). */
+QJsonObject absMoveEvent(const char *axis, int value)
+{
+    return QJsonObject {
+        { QStringLiteral("type"), QStringLiteral("abs") },
+        { QStringLiteral("data"),
+          QJsonObject {
+              { QStringLiteral("axis"), QString::fromLatin1(axis) },
+              { QStringLiteral("value"), qBound(0, value, 0x7fff) },
+          } },
+    };
+}
+
+/** Pointer button press/release for *button*. */
+QJsonObject buttonEvent(const QString &button, bool down)
+{
+    return QJsonObject {
+        { QStringLiteral("type"), QStringLiteral("btn") },
+        { QStringLiteral("data"),
+          QJsonObject {
+              { QStringLiteral("button"), button },
+              { QStringLiteral("down"), down },
+          } },
+    };
+}
 } // namespace
 
 QmpClient::QmpClient(QObject *parent)
@@ -325,6 +351,133 @@ int QmpClient::sendKey(const QString &qcode, bool down)
     // pair; zero leaves the key held until the next call.
     args[QStringLiteral("hold-time")] = down ? 100 : 0;
     return sendCommand(QStringLiteral("send-key"), args);
+}
+
+int QmpClient::androidKeyCodeFor(const QString &action)
+{
+    const QString key = action.trimmed().toLower();
+    if (key == QLatin1String("back"))
+        return 4;
+    if (key == QLatin1String("home"))
+        return 3;
+    if (key == QLatin1String("recents") || key == QLatin1String("recent")
+        || key == QLatin1String("app_switch") || key == QLatin1String("appswitch")
+        || key == QLatin1String("overview"))
+        return 187;
+    return -1;
+}
+
+int QmpClient::sendAndroidKey(int androidKeyCode)
+{
+    // Map the Android key onto the qcode the guest's input HAL understands.
+    const char *qcode = nullptr;
+    switch (androidKeyCode) {
+    case 4:   qcode = "esc";   break;  // KEYCODE_BACK
+    case 3:   qcode = "home";  break;  // KEYCODE_HOME
+    case 187: qcode = "sysrq"; break;  // KEYCODE_APP_SWITCH
+    default:  return -1;
+    }
+
+    const int downId = sendKey(QString::fromLatin1(qcode), true);
+    if (downId < 0)
+        return -1;
+    sendKey(QString::fromLatin1(qcode), false);
+    return 2;
+}
+
+int QmpClient::sendTap(int x, int y)
+{
+    QJsonObject args;
+    args[QStringLiteral("events")] = QJsonArray {
+        absMoveEvent("x", x),
+        absMoveEvent("y", y),
+        buttonEvent(QStringLiteral("touch"), true),
+        buttonEvent(QStringLiteral("touch"), false),
+    };
+    if (sendCommand(QStringLiteral("input-send-event"), args) < 0)
+        return -1;
+    return 4;
+}
+
+int QmpClient::sendTouchDown(int x, int y)
+{
+    QJsonObject args;
+    args[QStringLiteral("events")] = QJsonArray {
+        absMoveEvent("x", x),
+        absMoveEvent("y", y),
+        buttonEvent(QStringLiteral("touch"), true),
+    };
+    if (sendCommand(QStringLiteral("input-send-event"), args) < 0)
+        return -1;
+    return 3;
+}
+
+int QmpClient::sendTouchMove(int x, int y)
+{
+    QJsonObject args;
+    args[QStringLiteral("events")] = QJsonArray {
+        absMoveEvent("x", x),
+        absMoveEvent("y", y),
+    };
+    if (sendCommand(QStringLiteral("input-send-event"), args) < 0)
+        return -1;
+    return 2;
+}
+
+int QmpClient::sendTouchUp()
+{
+    QJsonObject args;
+    args[QStringLiteral("events")] = QJsonArray {
+        buttonEvent(QStringLiteral("touch"), false),
+    };
+    if (sendCommand(QStringLiteral("input-send-event"), args) < 0)
+        return -1;
+    return 1;
+}
+
+int QmpClient::sendDrag(int x1, int y1, int x2, int y2)
+{
+    QJsonObject args;
+    args[QStringLiteral("events")] = QJsonArray {
+        absMoveEvent("x", x1),
+        absMoveEvent("y", y1),
+        buttonEvent(QStringLiteral("touch"), true),
+        absMoveEvent("x", x2),
+        absMoveEvent("y", y2),
+        buttonEvent(QStringLiteral("touch"), false),
+    };
+    return sendCommand(QStringLiteral("input-send-event"), args);
+}
+
+int QmpClient::sendMouseDelta(int dx, int dy)
+{
+    const QJsonObject relX = QJsonObject {
+        { QStringLiteral("type"), QStringLiteral("rel") },
+        { QStringLiteral("data"),
+          QJsonObject {
+              { QStringLiteral("axis"), QStringLiteral("x") },
+              { QStringLiteral("value"), dx },
+          } },
+    };
+    const QJsonObject relY = QJsonObject {
+        { QStringLiteral("type"), QStringLiteral("rel") },
+        { QStringLiteral("data"),
+          QJsonObject {
+              { QStringLiteral("axis"), QStringLiteral("y") },
+              { QStringLiteral("value"), dy },
+          } },
+    };
+
+    QJsonObject args;
+    args[QStringLiteral("events")] = QJsonArray { relX, relY };
+    return sendCommand(QStringLiteral("input-send-event"), args);
+}
+
+int QmpClient::sendMouseButton(const QString &button, bool down)
+{
+    QJsonObject args;
+    args[QStringLiteral("events")] = QJsonArray { buttonEvent(button, down) };
+    return sendCommand(QStringLiteral("input-send-event"), args);
 }
 
 void QmpClient::fail(const QString &message)

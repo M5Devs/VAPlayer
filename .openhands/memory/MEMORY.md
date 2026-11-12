@@ -133,3 +133,28 @@ ninja          # -> build/vaplayer-core (~76 MB)
 - Presets in `RomManagerDialog::presets()` mirror `tools` known images:
   `android-x86-9` (default), `android-x86-7.1`, `blissos-15`, local ISO.
 - Tests: `cd ui/build && ctest` = 4/4; `tools` pytest = 138 passed.
+
+## ui/ Task E — Quick Controls, Drag&Drop, Shared Folder, Keymapper
+- New modules: `ui/keymapper/{Keymap,KeymapperEngine,KeymapperOverlay}`,
+  `ui/tools/AdbClient`, `ui/ui/{DropHelper,ViewportWidget,SharedFolderDialog,
+  KeymapperDialog}`, `ui/profiles/default.json` (copied next to the binary by a
+  POST_BUILD step so `Keymap::defaultProfilePath()` resolves).
+- `ViewportWidget` **replaces** the old `QFrame screenFrame` in `MainWindow.ui`
+  (registered under `<customwidgets>`). There is **no `ui->screenLabel`
+  anymore** — use `m_viewport->setPlaceholderText()`. `qobject_cast<ViewportWidget*>(
+  ui->screenFrame)` gives the instance.
+- The keymapper editor is **modeless**: tap points are placed by clicking the
+  overlay while the dialog is open, so `exec()` would deadlock the placement
+  flow. Toggle button = active/editing; closing the dialog returns the overlay
+  to click-through play.
+- Mouse input is forwarded **only** when an engine is attached
+  (`ViewportWidget::setKeymapperEngine`) and only while a button is held.
+- 9p shared folder is **gated on `supportsDevice("virtio-9p-pci")`**; the pruned
+  core does not build 9p yet, so the export is silently skipped. The probe runs
+  `<core> -device help`; test it with a stub script (see
+  `test_emulator_runner.cpp::writeStubEmulator`).
+- Tests: `ui/tests/test_keymapper.cpp` (14) + `ui/tests/test_task_e.cpp` (13),
+  registered with `QT_QPA_PLATFORM=offscreen`. Suite = 6/6. `QmpClient` test
+  servers must send the greeting **on connect** (QMP greeting is unsolicited).
+- `Qt::SingleShotConnection` needs Qt >= 6.5; guard with
+  `QT_VERSION_CHECK(6,5,0)` (constexpr `kSingleShot` in MainWindow.cpp).

@@ -145,6 +145,40 @@ bool EmulatorRunner::supportsUserNetdev() const
     return m_hasUserNetdev;
 }
 
+bool EmulatorRunner::supportsDevice(const QString &model) const
+{
+    if (!m_devicesProbed) {
+        m_devicesProbed = true;
+
+        const QString program = resolveEmulatorPath(m_config.emulatorPath);
+        if (!program.isEmpty()) {
+            // "-device help" prints one "name \"<model>\", bus ..." line per
+            // compiled-in device and exits immediately.
+            QProcess probe;
+            probe.start(program, { QStringLiteral("-device"), QStringLiteral("help") });
+            if (probe.waitForFinished(5000)) {
+                const QString output =
+                    QString::fromLocal8Bit(probe.readAllStandardOutput())
+                    + QString::fromLocal8Bit(probe.readAllStandardError());
+                const QRegularExpression line(
+                    QStringLiteral("name \"([^\"]+)\""));
+                auto it = line.globalMatch(output);
+                while (it.hasNext())
+                    m_availableDevices.append(it.next().captured(1));
+            } else {
+                probe.kill();
+            }
+        }
+    }
+
+    // An unknown core cannot be probed, so assume the device is present and
+    // let the core report a hard error if it is not.
+    if (m_availableDevices.isEmpty())
+        return true;
+
+    return m_availableDevices.contains(model);
+}
+
 QStringList EmulatorRunner::buildArguments() const
 {
     QStringList args;
@@ -185,6 +219,13 @@ QStringList EmulatorRunner::buildArguments() const
         args << QStringLiteral("-device") << QStringLiteral("virtio-sound-pci,audiodev=snd0");
     if (m_config.enableTablet)
         args << QStringLiteral("-device") << QStringLiteral("virtio-tablet-pci");
+    // A multitouch screen is the natural target for the keymapper's synthetic
+    // taps and drags; the keyboard carries the mapped key events.
+    if (m_config.enableMultitouch
+        && supportsDevice(QStringLiteral("virtio-multitouch-pci")))
+        args << QStringLiteral("-device") << QStringLiteral("virtio-multitouch-pci");
+    if (m_config.enableKeyboard)
+        args << QStringLiteral("-device") << QStringLiteral("virtio-keyboard-pci");
     if (m_config.enableNetwork) {
         args << QStringLiteral("-device")
              << QStringLiteral("virtio-net-pci,netdev=n0");
@@ -201,6 +242,18 @@ QStringList EmulatorRunner::buildArguments() const
             args << QStringLiteral("-netdev")
                  << QStringLiteral("socket,id=n0,listen=:0");
         }
+    }
+
+    // Host-to-guest shared folder.  Exported read/write over 9p so files
+    // dropped on the host show up inside Android without an ADB round trip.
+    if (!m_config.sharedFolderPath.isEmpty()
+        && supportsDevice(QStringLiteral("virtio-9p-pci"))) {
+        args << QStringLiteral("-fsdev")
+             << QStringLiteral("local,id=vaplayer_fs,path=%1,security_model=none")
+                    .arg(m_config.sharedFolderPath)
+             << QStringLiteral("-device")
+             << QStringLiteral("virtio-9p-pci,fsdev=vaplayer_fs,mount_tag=%1")
+                    .arg(m_config.sharedFolderTag);
     }
 
     // Control channel.

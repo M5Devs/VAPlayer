@@ -51,6 +51,17 @@ struct EmulatorConfig
 
     /** Android device debugging bridge port exposed on the host. */
     quint16 adbPort = 5555;
+
+    bool enableMultitouch = true;   ///< virtio-multitouch-pci (touch screen).
+    bool enableKeyboard = true;     ///< virtio-keyboard-pci (keymapper input).
+
+    /**
+     * Host directory exported to the guest over VirtFS (``-virtfs``).  The
+     * guest mounts it as a 9p filesystem; VAPlayer uses it as the shared
+     * folder that files dropped on the host appear in.
+     */
+    QString sharedFolderPath;
+    QString sharedFolderTag = QStringLiteral("vaplayer");
 };
 
 /**
@@ -103,6 +114,13 @@ public:
      */
     bool supportsUserNetdev() const;
 
+    /**
+     * True when the core supports the given ``-device`` model (e.g.
+     * "virtio-9p-pci", "virtio-multitouch-pci").  Probed lazily via
+     * ``-device help`` and cached per model name.
+     */
+    bool supportsDevice(const QString &model) const;
+
     /** Start the emulator.  Returns false if the binary cannot be located. */
     bool start();
 
@@ -141,6 +159,9 @@ private:
 
     mutable bool m_userNetdevProbed = false;
     mutable bool m_hasUserNetdev = false;
+
+    mutable bool m_devicesProbed = false;
+    mutable QStringList m_availableDevices;
 };
 
 #endif // VAPLAYER_EMULATORRUNNER_H

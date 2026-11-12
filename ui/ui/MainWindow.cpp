@@ -22,19 +22,31 @@
 #include "ui/SettingsDialog.h"
 #include "ui/VFlashDialog.h"
 #include "ui/RomManagerDialog.h"
+#include "ui/SharedFolderDialog.h"
+#include "ui/KeymapperDialog.h"
+#include "ui/DropHelper.h"
+#include "ui/ViewportWidget.h"
 
 #include "core_bridge/QmpClient.h"
+#include "keymapper/KeymapperEngine.h"
+#include "keymapper/KeymapperOverlay.h"
 #include "process/EmulatorRunner.h"
+#include "tools/AdbClient.h"
 
 #include <QCloseEvent>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QHostAddress>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QMessageBox>
+#include <QPixmap>
 #include <QPushButton>
 #include <QSettings>
+#include <QStandardPaths>
 #include <QStatusBar>
 #include <QStyle>
 #include <QTcpSocket>
@@ -51,6 +63,21 @@ constexpr int kAdbPollIntervalMs = 3000;
 /** X11 key codes for the Android volume rocker. */
 constexpr char kKeyVolumeUp[] = "volumeup";
 constexpr char kKeyVolumeDown[] = "volumedown";
+
+/** Android key codes sent by the quick-control navigation buttons. */
+constexpr int kAndroidKeyBack = 4;
+constexpr int kAndroidKeyHome = 3;
+constexpr int kAndroidKeyRecents = 187;
+
+/**
+ * Qt 6.5 added a first-class single-shot connection.  Older releases fall
+ * back to a normal connection; the affected handlers are idempotent.
+ */
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+constexpr Qt::ConnectionType kSingleShot = Qt::SingleShotConnection;
+#else
+constexpr Qt::ConnectionType kSingleShot = Qt::AutoConnection;
+#endif
 
 /** Palette for the dark, minimal "gaming" theme. */
 constexpr char kStyleSheet[] = R"(
@@ -249,6 +276,17 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_runner = new EmulatorRunner(this);
     m_qmp = new QmpClient(this);
+    m_adb = new AdbClient(this);
+
+    // The viewport is a promoted custom widget hosting the keymapper overlay.
+    m_viewport = qobject_cast<ViewportWidget *>(ui->screenFrame);
+    m_keymapper = new KeymapperEngine(this);
+    m_keymapper->setQmpClient(m_qmp);
+    if (m_viewport) {
+        m_viewport->setKeymapperEngine(m_keymapper);
+        if (m_viewport->overlay())
+            m_viewport->overlay()->setEngine(m_keymapper);
+    }
 
     m_adbTimer = new QTimer(this);
     m_adbTimer->setInterval(kAdbPollIntervalMs);
@@ -266,8 +304,19 @@ MainWindow::MainWindow(QWidget *parent)
     m_config.enableSound = settings.value(QStringLiteral("emulator/enableSound"), true).toBool();
     m_config.enableNetwork = settings.value(QStringLiteral("emulator/enableNetwork"), true).toBool();
     m_config.enableTablet = settings.value(QStringLiteral("emulator/enableTablet"), true).toBool();
+    m_config.sharedFolderPath =
+        settings.value(QStringLiteral("emulator/sharedFolder")).toString();
 
     m_runner->setConfig(m_config);
+
+    // Restore the last keymapper profile, or the shipped default.
+    loadKeymapForActiveGame();
+
+    // Screen placeholder + live keymapper overlay wiring.
+    if (m_viewport) {
+        m_viewport->setPlaceholderText(
+            tr("No signal\n\nPress “Power On” to start the emulator."));
+    }
 
     setOrientation(Orientation::Portrait);
     applyStateToControls();
@@ -315,6 +364,62 @@ void MainWindow::setupConnections()
             this, &MainWindow::onVFlashClicked);
     connect(ui->romManagerButton, &QPushButton::clicked,
             this, &MainWindow::onRomManagerClicked);
+
+    // Quick controls.
+    connect(ui->backButton, &QPushButton::clicked,
+            this, &MainWindow::onBackClicked);
+    connect(ui->homeButton, &QPushButton::clicked,
+            this, &MainWindow::onHomeClicked);
+    connect(ui->recentsButton, &QPushButton::clicked,
+            this, &MainWindow::onRecentsClicked);
+    connect(ui->screenshotButton, &QPushButton::clicked,
+            this, &MainWindow::onScreenshotClicked);
+    connect(ui->fullscreenButton, &QPushButton::toggled,
+            this, &MainWindow::onFullscreenToggled);
+    connect(ui->sharedFolderButton, &QPushButton::clicked,
+            this, &MainWindow::onSharedFolderClicked);
+    connect(ui->keymapperButton, &QPushButton::toggled,
+            this, &MainWindow::onKeymapperToggled);
+
+    if (m_viewport) {
+        connect(m_viewport, &ViewportWidget::filesDropped,
+                this, &MainWindow::onFilesDropped);
+        // Mouse input feeds the keymapper's tap and crosshair mappings.
+        connect(m_viewport, &ViewportWidget::mousePressed, this,
+                [this](const QString &button) {
+                    if (m_keymapperEnabled)
+                        m_keymapper->handleMousePress(button);
+                });
+        connect(m_viewport, &ViewportWidget::mouseReleased, this,
+                [this](const QString &button) {
+                    if (m_keymapperEnabled)
+                        m_keymapper->handleMouseRelease(button);
+                });
+        connect(m_viewport, &ViewportWidget::mouseMoved, this,
+                [this](int dx, int dy) {
+                    if (m_keymapperEnabled && m_keymapper->isCrosshairActive())
+                        m_keymapper->handleMouseMove(dx, dy);
+                });
+        if (KeymapperOverlay *overlay = m_viewport->overlay()) {
+            connect(overlay, &KeymapperOverlay::statusMessage,
+                    this, &MainWindow::setStatusMessage);
+            connect(overlay, &KeymapperOverlay::keymapChanged, this,
+                    [this](const Keymap &keymap) {
+                        m_keymap = keymap;
+                        m_keymapper->setKeymap(keymap);
+                    });
+        }
+    }
+
+    // ADB command output is surfaced in the status bar.
+    connect(m_adb, &AdbClient::outputLine, this, [this](const QString &line) {
+        const QString trimmed = line.trimmed();
+        if (!trimmed.isEmpty())
+            appendLog(trimmed);
+    });
+    connect(m_adb, &AdbClient::failed, this, [this](const QString &message) {
+        showToast(message);
+    });
 
     connect(m_runner, &EmulatorRunner::stateChanged,
             this, &MainWindow::onRunnerStateChanged);
@@ -480,6 +585,330 @@ void MainWindow::onRomManagerClicked()
     dialog.exec();
 }
 
+void MainWindow::onBackClicked()
+{
+    if (!m_qmp->isReady()) {
+        showToast(tr("Navigation requires a running emulator."));
+        return;
+    }
+    m_qmp->sendAndroidKey(kAndroidKeyBack);
+    showToast(tr("Back"));
+}
+
+void MainWindow::onHomeClicked()
+{
+    if (!m_qmp->isReady()) {
+        showToast(tr("Navigation requires a running emulator."));
+        return;
+    }
+    m_qmp->sendAndroidKey(kAndroidKeyHome);
+    showToast(tr("Home"));
+}
+
+void MainWindow::onRecentsClicked()
+{
+    if (!m_qmp->isReady()) {
+        showToast(tr("Navigation requires a running emulator."));
+        return;
+    }
+    m_qmp->sendAndroidKey(kAndroidKeyRecents);
+    showToast(tr("Recent apps"));
+}
+
+void MainWindow::onScreenshotClicked()
+{
+    if (m_adb->isBusy()) {
+        showToast(tr("An ADB command is already running."));
+        return;
+    }
+
+    const QString dir =
+        QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
+    QDir().mkpath(dir);
+    const QString stamp =
+        QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-hhmmss"));
+    const QString target = QDir(dir).absoluteFilePath(
+        QStringLiteral("vaplayer-%1.png").arg(stamp));
+
+    connect(m_adb, &AdbClient::finished, this,
+            [this, target](bool success, int) {
+                if (success)
+                    showToast(tr("Screenshot saved to %1").arg(target));
+                else
+                    showToast(tr("Screenshot failed."));
+            },
+            Qt::SingleShotConnection);
+
+    if (!m_adb->captureScreenshot(target))
+        showToast(tr("Could not start the screenshot."));
+    else
+        setStatusMessage(tr("Capturing screenshot…"));
+}
+
+void MainWindow::onFullscreenToggled(bool enabled)
+{
+    if (enabled)
+        showFullScreen();
+    else
+        showNormal();
+    appendLog(enabled ? tr("Fullscreen enabled.") : tr("Fullscreen disabled."));
+}
+
+void MainWindow::onSharedFolderClicked()
+{
+    SharedFolderDialog dialog(this);
+    dialog.setFolderPath(m_config.sharedFolderPath.isEmpty()
+                             ? SharedFolderDialog::defaultFolderPath()
+                             : m_config.sharedFolderPath);
+    dialog.setVirtfsEnabled(!m_config.sharedFolderPath.isEmpty());
+
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+
+    const QString folder = dialog.folderPath();
+    if (folder.isEmpty()) {
+        showToast(tr("Choose a folder to share."));
+        return;
+    }
+
+    QDir().mkpath(folder);
+    m_config.sharedFolderPath = folder;
+    m_runner->setConfig(m_config);
+
+    QSettings settings;
+    settings.setValue(QStringLiteral("emulator/sharedFolder"), folder);
+
+    appendLog(tr("Shared folder set to %1.").arg(folder));
+
+    if (dialog.adbSyncEnabled()) {
+        if (!m_adbConnected) {
+            showToast(tr("Shared folder saved. Start the emulator to sync."));
+        } else {
+            setStatusMessage(tr("Syncing shared folder…"));
+            pushDirectory(folder, SharedFolderDialog::guestSyncTarget());
+        }
+    } else {
+        showToast(tr("Shared folder saved — takes effect on next power-on."));
+    }
+}
+
+void MainWindow::onKeymapperToggled(bool enabled)
+{
+    m_keymapperEnabled = enabled;
+    m_keymapper->setEnabled(enabled);
+
+    KeymapperOverlay *overlay = m_viewport ? m_viewport->overlay() : nullptr;
+
+    if (!enabled) {
+        if (overlay)
+            overlay->setMappingMode(false);
+        if (m_keymapperDialog)
+            m_keymapperDialog->reject();
+        appendLog(tr("Keymapper disabled."));
+        return;
+    }
+
+    // The editor is modeless: tap points are placed by clicking the overlay
+    // while the dialog is open, so the dialog must not block the viewport.
+    if (overlay) {
+        overlay->setKeymap(m_keymap);
+        overlay->setMappingMode(true);
+    }
+
+    if (!m_keymapperDialog) {
+        m_keymapperDialog = new KeymapperDialog(this);
+        m_keymapperDialog->setKeymap(m_keymap);
+        connect(m_keymapperDialog, &KeymapperDialog::keymapChanged, this,
+                [this, overlay](const Keymap &keymap) {
+                    m_keymap = keymap;
+                    m_keymapper->setKeymap(keymap);
+                    if (overlay)
+                        overlay->setKeymap(keymap);
+                });
+        connect(m_keymapperDialog, &KeymapperDialog::armKeyChanged, this,
+                [overlay](const QString &key) {
+                    if (overlay)
+                        overlay->setArmedKey(key);
+                });
+        connect(m_keymapperDialog, &KeymapperDialog::profileSaved, this,
+                [this](const Keymap &keymap, const QString &path) {
+                    m_keymap = keymap;
+                    m_keymapper->setKeymap(keymap);
+                    QSettings settings;
+                    settings.setValue(QStringLiteral("keymapper/lastProfile"), path);
+                    showToast(tr("Keymapper profile saved."));
+                });
+        connect(m_keymapperDialog, &QDialog::finished, this, [overlay]() {
+            // Closing the editor returns the viewport to click-through play.
+            // The keymapper itself stays active until the toolbar toggle is
+            // switched off.
+            if (overlay)
+                overlay->setMappingMode(false);
+        });
+    }
+
+    m_keymapperDialog->show();
+    m_keymapperDialog->raise();
+    m_keymapperDialog->activateWindow();
+
+    appendLog(tr("Keymapper enabled."));
+}
+
+void MainWindow::onFilesDropped(const QStringList &paths)
+{
+    if (paths.isEmpty())
+        return;
+
+    m_dropQueue += paths;
+    showToast(tr("Processing %n dropped file(s)…", "", paths.size()));
+    processNextDrop();
+}
+
+void MainWindow::processNextDrop()
+{
+    if (m_dropQueue.isEmpty()) {
+        m_dropInProgress = false;
+        return;
+    }
+    if (m_dropInProgress)
+        return;
+
+    m_dropInProgress = true;
+    const QString path = m_dropQueue.takeFirst();
+    handleDroppedFile(path);
+
+    // Advance once the current ADB command finishes; actions that do not use
+    // ADB advance immediately.
+    if (m_adb->isBusy()) {
+        connect(m_adb, &AdbClient::finished, this,
+                [this](bool, int) {
+                    m_dropInProgress = false;
+                    processNextDrop();
+                },
+                kSingleShot);
+    } else {
+        m_dropInProgress = false;
+        if (!m_dropQueue.isEmpty())
+            QTimer::singleShot(0, this, &MainWindow::processNextDrop);
+    }
+}
+
+void MainWindow::handleDroppedFile(const QString &path)
+{
+    const QFileInfo info(path);
+    if (!info.exists()) {
+        showToast(tr("Dropped file no longer exists: %1").arg(path));
+        return;
+    }
+
+    if (info.isDir()) {
+        if (!m_adbConnected) {
+            showToast(tr("Connect ADB before dropping a folder."));
+            return;
+        }
+        pushDirectory(path, SharedFolderDialog::guestSyncTarget());
+        return;
+    }
+
+    const DropAction action = classifyDrop(path);
+    switch (action) {
+    case DropAction::InstallApk:
+        if (!m_adbConnected) {
+            showToast(tr("Start the emulator to install %1.").arg(info.fileName()));
+            return;
+        }
+        setStatusMessage(tr("Installing %1…").arg(info.fileName()));
+        connect(m_adb, &AdbClient::finished, this,
+                [this, name = info.fileName()](bool success, int) {
+                    showToast(success
+                                  ? tr("%1 installed.").arg(name)
+                                  : tr("Failed to install %1.").arg(name));
+                },
+                Qt::SingleShotConnection);
+        m_adb->installApk(path);
+        break;
+
+    case DropAction::FlashZip:
+        // A flashable package is routed through V-Flash with it pre-selected.
+        m_lastFlashPackage = path;
+        appendLog(tr("Dropped package %1 — opening V-Flash.").arg(info.fileName()));
+        onVFlashClicked();
+        break;
+
+    case DropAction::PushFile: {
+        if (!m_adbConnected) {
+            showToast(tr("Start the emulator to copy %1.").arg(info.fileName()));
+            return;
+        }
+        const QString remote = dropDestination(path);
+        setStatusMessage(tr("Copying %1 to the guest…").arg(info.fileName()));
+        connect(m_adb, &AdbClient::finished, this,
+                [this, name = info.fileName()](bool success, int) {
+                    showToast(success
+                                  ? tr("%1 copied to the guest.").arg(name)
+                                  : tr("Failed to copy %1.").arg(name));
+                },
+                Qt::SingleShotConnection);
+        m_adb->pushFile(path, remote);
+        break;
+    }
+
+    case DropAction::Ignore:
+        showToast(tr("Unsupported dropped file: %1").arg(info.fileName()));
+        break;
+    }
+}
+
+void MainWindow::pushDirectory(const QString &localDir, const QString &remoteDir)
+{
+    const QDir dir(localDir);
+    if (!dir.exists()) {
+        showToast(tr("Folder does not exist: %1").arg(localDir));
+        return;
+    }
+
+    // Ensure the destination exists, then push the folder as a subtree.
+    m_adb->pushFile(localDir, remoteDir);
+    appendLog(tr("Syncing %1 → %2").arg(localDir, remoteDir));
+}
+
+void MainWindow::loadKeymapForActiveGame()
+{
+    QSettings settings;
+    const QString lastProfile =
+        settings.value(QStringLiteral("keymapper/lastProfile")).toString();
+
+    QString path = lastProfile;
+    if (path.isEmpty() || !QFileInfo(path).isFile())
+        path = Keymap::defaultProfilePath();
+
+    bool ok = false;
+    if (QFileInfo(path).isFile())
+        m_keymap = Keymap::load(path, &ok);
+    if (!ok)
+        m_keymap = Keymap();
+
+    m_keymapper->setKeymap(m_keymap);
+    if (m_viewport && m_viewport->overlay())
+        m_viewport->overlay()->setKeymap(m_keymap);
+}
+
+void MainWindow::persistActiveKeymap()
+{
+    if (m_keymap.isEmpty())
+        return;
+
+    const QString stem = !m_keymap.packageName.isEmpty()
+                             ? m_keymap.packageName
+                             : QStringLiteral("default");
+    const QString path = Keymap::profilePathFor(stem);
+    QString error;
+    if (m_keymap.save(path, &error))
+        appendLog(tr("Keymapper profile saved to %1.").arg(path));
+    else
+        appendLog(tr("Could not save the keymapper profile: %1").arg(error));
+}
+
 void MainWindow::onRomImageReady(const QString &imagePath)
 {
     appendLog(tr("ROM prepared: %1").arg(imagePath));
@@ -525,7 +954,9 @@ void MainWindow::onRunnerStateChanged(EmulatorRunner::State state)
         break;
     case EmulatorRunner::State::Running:
         setStatusMessage(tr("Running"));
-        ui->screenLabel->setText(tr("Guest running\n\n(display surface pending)"));
+        if (m_viewport)
+            m_viewport->setPlaceholderText(
+                tr("Guest running\n\n(display surface pending)"));
         // The core opens its QMP socket shortly after start; retry briefly.
         connectQmp();
         break;
@@ -534,7 +965,11 @@ void MainWindow::onRunnerStateChanged(EmulatorRunner::State state)
         break;
     case EmulatorRunner::State::Stopped:
         setStatusMessage(tr("Idle"));
-        ui->screenLabel->setText(tr("No signal\n\nPress “Power On” to start the emulator."));
+        if (m_viewport) {
+            m_viewport->clearFrame();
+            m_viewport->setPlaceholderText(
+                tr("No signal\n\nPress “Power On” to start the emulator."));
+        }
         disconnectQmp();
         break;
     }
@@ -616,6 +1051,7 @@ void MainWindow::applyOrientation()
 void MainWindow::updateAdbIndicator(bool connected)
 {
     m_adbConnected = connected;
+    applyStateToControls();
     ui->adbIndicator->setProperty("state",
                                   connected ? QStringLiteral("online")
                                             : QStringLiteral("offline"));
@@ -666,12 +1102,57 @@ void MainWindow::applyStateToControls()
     ui->resetButton->setEnabled(running);
     ui->volumeUpButton->setEnabled(qmpReady);
     ui->volumeDownButton->setEnabled(qmpReady);
+    ui->backButton->setEnabled(qmpReady);
+    ui->homeButton->setEnabled(qmpReady);
+    ui->recentsButton->setEnabled(qmpReady);
+    ui->screenshotButton->setEnabled(m_adbConnected);
 }
 
 void MainWindow::setStatusMessage(const QString &message)
 {
     ui->statusBarLabel->setText(message);
     statusBar()->showMessage(message, 4000);
+}
+
+void MainWindow::showToast(const QString &message)
+{
+    // The status bar is the toast surface: a transient message plus the
+    // persistent label so the last event stays readable.
+    setStatusMessage(message);
+    appendLog(message);
+}
+
+void MainWindow::keyPressEvent(QKeyEvent *event)
+{
+    // F11 toggles fullscreen regardless of the keymapper.
+    if (event->key() == Qt::Key_F11) {
+        ui->fullscreenButton->toggle();
+        event->accept();
+        return;
+    }
+
+    if (m_keymapperEnabled) {
+        const QString qcode = Keymap::qcodeForQtKey(event->key());
+        if (!qcode.isEmpty() && m_keymapper->handleKeyPress(qcode)) {
+            event->accept();
+            return;
+        }
+    }
+
+    QMainWindow::keyPressEvent(event);
+}
+
+void MainWindow::keyReleaseEvent(QKeyEvent *event)
+{
+    if (m_keymapperEnabled) {
+        const QString qcode = Keymap::qcodeForQtKey(event->key());
+        if (!qcode.isEmpty() && m_keymapper->handleKeyRelease(qcode)) {
+            event->accept();
+            return;
+        }
+    }
+
+    QMainWindow::keyReleaseEvent(event);
 }
 
 void MainWindow::appendLog(const QString &line)
@@ -699,5 +1180,9 @@ void MainWindow::closeEvent(QCloseEvent *event)
     }
 
     m_adbTimer->stop();
+
+    // Keep the working keymap for the next session.
+    persistActiveKeymap();
+
     event->accept();
 }

@@ -235,6 +235,131 @@
         </widget>
        </item>
        <item>
+        <widget class="QLabel" name="quickSectionLabel">
+         <property name="text">
+          <string>QUICK CONTROLS</string>
+         </property>
+         <property name="objectName">
+          <string>sectionLabel</string>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="navigationLayout">
+         <property name="spacing">
+          <number>8</number>
+         </property>
+         <item>
+          <widget class="QPushButton" name="backButton">
+           <property name="text">
+            <string>◁ Back</string>
+           </property>
+           <property name="toolTip">
+            <string>Android Back (KeyCode 4)</string>
+           </property>
+           <property name="objectName">
+            <string>secondaryButton</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="homeButton">
+           <property name="text">
+            <string>○ Home</string>
+           </property>
+           <property name="toolTip">
+            <string>Android Home (KeyCode 3)</string>
+           </property>
+           <property name="objectName">
+            <string>secondaryButton</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="recentsButton">
+           <property name="text">
+            <string>▢ Recents</string>
+           </property>
+           <property name="toolTip">
+            <string>Android Recent Apps (KeyCode 187)</string>
+           </property>
+           <property name="objectName">
+            <string>secondaryButton</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="quickActionLayout">
+         <property name="spacing">
+          <number>8</number>
+         </property>
+         <item>
+          <widget class="QPushButton" name="screenshotButton">
+           <property name="text">
+            <string>Screenshot</string>
+           </property>
+           <property name="toolTip">
+            <string>Save the current screen to your Pictures folder</string>
+           </property>
+           <property name="objectName">
+            <string>secondaryButton</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="fullscreenButton">
+           <property name="text">
+            <string>Fullscreen</string>
+           </property>
+           <property name="toolTip">
+            <string>Toggle fullscreen (F11)</string>
+           </property>
+           <property name="checkable">
+            <bool>true</bool>
+           </property>
+           <property name="objectName">
+            <string>secondaryButton</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="shareLayout">
+         <property name="spacing">
+          <number>8</number>
+         </property>
+         <item>
+          <widget class="QPushButton" name="sharedFolderButton">
+           <property name="text">
+            <string>Shared Folder</string>
+           </property>
+           <property name="objectName">
+            <string>secondaryButton</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="keymapperButton">
+           <property name="text">
+            <string>Keymapper</string>
+           </property>
+           <property name="checkable">
+            <bool>true</bool>
+           </property>
+           <property name="toolTip">
+            <string>Edit and activate the touch keymapper</string>
+           </property>
+           <property name="objectName">
+            <string>secondaryButton</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
         <spacer name="middleSpacer">
          <property name="orientation">
           <enum>Qt::Vertical</enum>
@@ -432,45 +557,13 @@
         <number>16</number>
        </property>
        <item>
-        <widget class="QFrame" name="screenFrame">
-         <property name="frameShape">
-          <enum>QFrame::NoFrame</enum>
-         </property>
+        <widget class="ViewportWidget" name="screenFrame">
          <property name="objectName">
           <string>screenFrame</string>
          </property>
-         <layout class="QVBoxLayout" name="screenLayout">
-          <property name="spacing">
-           <number>0</number>
-          </property>
-          <property name="leftMargin">
-           <number>0</number>
-          </property>
-          <property name="topMargin">
-           <number>0</number>
-          </property>
-          <property name="rightMargin">
-           <number>0</number>
-          </property>
-          <property name="bottomMargin">
-           <number>0</number>
-          </property>
-          <item>
-           <widget class="QLabel" name="screenLabel">
-            <property name="text">
-             <string>No signal
-
-Press “Power On” to start the emulator.</string>
-            </property>
-            <property name="alignment">
-             <set>Qt::AlignCenter</set>
-            </property>
-            <property name="objectName">
-             <string>screenLabel</string>
-            </property>
-           </widget>
-          </item>
-         </layout>
+         <property name="toolTip">
+          <string>Drop an APK to install, a ZIP to flash, or any file to push to /sdcard/Download</string>
+         </property>
         </widget>
        </item>
        <item>
@@ -506,6 +599,14 @@ Press “Power On” to start the emulator.</string>
   </widget>
   <widget class="QStatusBar" name="statusbar"/>
  </widget>
+ <customwidgets>
+  <customwidget>
+   <class>ViewportWidget</class>
+   <extends>QWidget</extends>
+   <header>ui/ViewportWidget.h</header>
+   <container>1</container>
+  </customwidget>
+ </customwidgets>
  <resources/>
  <connections/>
 </ui>

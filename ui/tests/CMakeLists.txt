@@ -23,6 +23,14 @@ set(VAPLAYER_TEST_SUPPORT
     ${CMAKE_SOURCE_DIR}/tools/ToolRunner.cpp
 )
 
+# Keymapper model, engine and overlay.  The overlay needs Qt Widgets.
+set(VAPLAYER_KEYMAPPER_SUPPORT
+    ${CMAKE_SOURCE_DIR}/core_bridge/QmpClient.cpp
+    ${CMAKE_SOURCE_DIR}/keymapper/Keymap.cpp
+    ${CMAKE_SOURCE_DIR}/keymapper/KeymapperEngine.cpp
+    ${CMAKE_SOURCE_DIR}/keymapper/KeymapperOverlay.cpp
+)
+
 add_executable(test_emulator_runner
     test_emulator_runner.cpp
     ${VAPLAYER_TEST_SUPPORT}
@@ -63,6 +71,35 @@ target_include_directories(test_provisioning PRIVATE
     ${CMAKE_SOURCE_DIR}
 )
 
+# Keymapper engine/overlay tests (Qt Widgets for the overlay).
+add_executable(test_keymapper
+    test_keymapper.cpp
+    ${VAPLAYER_KEYMAPPER_SUPPORT}
+)
+
+target_include_directories(test_keymapper PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+
+# Drag & drop, ADB and dialog tests.
+add_executable(test_task_e
+    test_task_e.cpp
+    ${CMAKE_SOURCE_DIR}/tools/ToolRunner.cpp
+    ${CMAKE_SOURCE_DIR}/tools/AdbClient.cpp
+    ${CMAKE_SOURCE_DIR}/ui/DropHelper.cpp
+    ${CMAKE_SOURCE_DIR}/ui/ViewportWidget.cpp
+    ${CMAKE_SOURCE_DIR}/ui/SharedFolderDialog.cpp
+    ${CMAKE_SOURCE_DIR}/ui/KeymapperDialog.cpp
+    ${CMAKE_SOURCE_DIR}/keymapper/Keymap.cpp
+    ${CMAKE_SOURCE_DIR}/keymapper/KeymapperEngine.cpp
+    ${CMAKE_SOURCE_DIR}/keymapper/KeymapperOverlay.cpp
+    ${CMAKE_SOURCE_DIR}/core_bridge/QmpClient.cpp
+)
+
+target_include_directories(test_task_e PRIVATE
+    ${CMAKE_SOURCE_DIR}
+)
+
 if(VAPLAYER_QT_VERSION EQUAL 6)
     target_link_libraries(test_emulator_runner PRIVATE
         Qt6::Core Qt6::Network Qt6::Test)
@@ -72,6 +109,10 @@ if(VAPLAYER_QT_VERSION EQUAL 6)
         Qt6::Core Qt6::Network Qt6::Test)
     target_link_libraries(test_provisioning PRIVATE
         Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test)
+    target_link_libraries(test_keymapper PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Test)
+    target_link_libraries(test_task_e PRIVATE
+        Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Test)
 else()
     target_link_libraries(test_emulator_runner PRIVATE
         Qt5::Core Qt5::Network Qt5::Test)
@@ -81,10 +122,27 @@ else()
         Qt5::Core Qt5::Network Qt5::Test)
     target_link_libraries(test_provisioning PRIVATE
         Qt5::Core Qt5::Gui Qt5::Widgets Qt5::Test)
+    target_link_libraries(test_keymapper PRIVATE
+        Qt5::Core Qt5::Gui Qt5::Widgets Qt5::Network Qt5::Test)
+    target_link_libraries(test_task_e PRIVATE
+        Qt5::Core Qt5::Gui Qt5::Widgets Qt5::Network Qt5::Test)
 endif()
 
 add_test(NAME emulator_runner COMMAND test_emulator_runner)
 add_test(NAME qmp_client COMMAND test_qmp_client)
+
+# Keymapper and Task E suites need a QApplication, so run them offscreen.
+add_test(NAME keymapper COMMAND test_keymapper)
+set_tests_properties(keymapper PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    TIMEOUT 120
+)
+
+add_test(NAME task_e COMMAND test_task_e)
+set_tests_properties(task_e PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    TIMEOUT 120
+)
 
 # The integration test needs a built vaplayer-core; it skips cleanly if absent.
 add_test(NAME core_integration COMMAND test_core_integration)
