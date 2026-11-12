@@ -103,3 +103,21 @@ ninja          # -> build/vaplayer-core (~76 MB)
 - Qt stylesheet: a `QLabel` child paints its own background over a parent
   frame; set `background: transparent` on the label or the frame colour (e.g.
   the black screen area) is hidden.
+
+## tools/ (Task C) — provisioning, ARM bridge, V-Flash  [commit c033cb8]
+- Run tests: `/usr/bin/python3 -m pytest tools/tests -q` (137 tests, real
+  artifacts, no mocks). `/usr/local/bin/python3` has NO pytest.
+- `tools/vaplayer_tools/`: shell, partition (MBR/GPT), ext4 (debugfs engine),
+  qcow2, android (build.prop/profiles/sparse), image (ISO→system.img→qcow2),
+  flashzip (edify + Magisk), nativebridge (libndk_translation injector).
+- CLIs: `tools/fetch_image.{sh,py}`, `tools/inject_arm.{sh,py}`,
+  `tools/bin/vflash` (+ `tools/vflash/{engine,cli}.py`). Docs: `tools/README.md`.
+- **debugfs pitfalls (both fixed, both silent-fatal):** (1) `set_inode_field
+  mode` writes the WHOLE st_mode — chmod must OR in the type bits or e2fsck
+  deletes the file as "bad type"; (2) debugfs never fixes superblock free-block
+  counters, so every write batch ends with `e2fsck -fy` (`Ext4Image.flush()`).
+- `unsquashfs -d DIR` does not create missing parents. Nested prebuilt paths
+  must be preserved or 32/64-bit `libndk_translation.so` collide. Edify args
+  split on top-level commas, not quote-scanning. A stub `updater-script` must
+  fall through to the shell/flat payload path.
+- Loop/mount still unusable ⇒ offline debugfs editing is the only route.
